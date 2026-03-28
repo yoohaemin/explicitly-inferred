@@ -18,7 +18,7 @@ object InferredReturnCommentPluginTests extends TestSuite {
       val expected =
         s"""object Sample {
            |  /*
-           |   * @inferredReturnType List[Int]
+           |   * @inferredReturnType List[A = Int]
            |   */
            |  def value = List(1, 2, 3)
            |}
@@ -43,7 +43,7 @@ object InferredReturnCommentPluginTests extends TestSuite {
         s"""object Sample {
            |  /*
            |   * keep me
-           |   * @inferredReturnType Option[Int]
+           |   * @inferredReturnType Option[A = Int]
            |   */
            |  def value = Option(1)
            |}
@@ -140,6 +140,182 @@ object InferredReturnCommentPluginTests extends TestSuite {
            |""".stripMargin
 
       assert(rewrite(input, methodRegex = "keep") == expected)
+    }
+
+    test("normalizes aliases and orders union members deterministically") {
+      val input =
+        s"""object Sample {
+           |  final class Foo
+           |  final class Bar
+           |  type Alias = Bar | Foo
+           |
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  final class Foo
+           |  final class Bar
+           |  type Alias = Bar | Foo
+           |
+           |  /*
+           |   * @inferredReturnType Foo | Bar
+           |   */
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input) == expected)
+    }
+
+    test("normalizes aliases and orders intersections deterministically") {
+      val input =
+        s"""object Sample {
+           |  trait Foo
+           |  trait Bar
+           |  type Alias = Bar & Foo
+           |
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  trait Foo
+           |  trait Bar
+           |  type Alias = Bar & Foo
+           |
+           |  /*
+           |   * @inferredReturnType Foo & Bar
+           |   */
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input) == expected)
+    }
+
+    test("renders type arguments in named or positional form") {
+      val input =
+        s"""object Sample {
+           |  final class Box[A]
+           |
+           |  def value = new Box[Int]
+           |}
+           |""".stripMargin
+
+      val namedExpected =
+        s"""object Sample {
+           |  final class Box[A]
+           |
+           |  /*
+           |   * @inferredReturnType Box[A = Int]
+           |   */
+           |  def value = new Box[Int]
+           |}
+           |""".stripMargin
+
+      val positionalExpected =
+        s"""object Sample {
+           |  final class Box[A]
+           |
+           |  /*
+           |   * @inferredReturnType Box[Int]
+           |   */
+           |  def value = new Box[Int]
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input) == namedExpected)
+      assert(rewrite(input, extraOptions = Seq("showTypeParamNames=false")) == positionalExpected)
+    }
+
+    test("can suppress type arguments entirely") {
+      val input =
+        s"""object Sample {
+           |  final class Box[A]
+           |
+           |  def value = new Box[Int]
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  final class Box[A]
+           |
+           |  /*
+           |   * @inferredReturnType Box
+           |   */
+           |  def value = new Box[Int]
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input, extraOptions = Seq("showTypeArgs=false")) == expected)
+    }
+
+    test("wraps long normalized types into a multiline payload block and stays idempotent") {
+      val input =
+        s"""object Sample {
+           |  final class Box[A]
+           |  final class Wrap[A]
+           |  type Alias = Wrap[String] | Box[Int]
+           |
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  final class Box[A]
+           |  final class Wrap[A]
+           |  type Alias = Wrap[String] | Box[Int]
+           |
+           |  /*
+           |   * @inferredReturnType
+           |   *   Box[A = Int] |
+           |   *   Wrap[A = String]
+           |   */
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      val once = rewrite(input, extraOptions = Seq("maxTypeLength=20"))
+      assert(once == expected)
+      assert(rewrite(once, extraOptions = Seq("maxTypeLength=20")) == expected)
+    }
+
+    test("replaces an existing managed multiline block entry in place") {
+      val input =
+        s"""object Sample {
+           |  final class Box[A]
+           |  final class Wrap[A]
+           |
+           |  /*
+           |   * keep me
+           |   * @inferredReturnType
+           |   *   stale
+           |   */
+           |  def value = null.asInstanceOf[Wrap[String] | Box[Int]]
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  final class Box[A]
+           |  final class Wrap[A]
+           |
+           |  /*
+           |   * keep me
+           |   * @inferredReturnType
+           |   *   Box[A = Int] |
+           |   *   Wrap[A = String]
+           |   */
+           |  def value = null.asInstanceOf[Wrap[String] | Box[Int]]
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input, extraOptions = Seq("maxTypeLength=20")) == expected)
     }
   }
 
