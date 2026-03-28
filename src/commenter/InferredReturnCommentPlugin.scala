@@ -27,6 +27,7 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
     """-P:inferredReturnComment:methodRegex=<java-regex>
       |-P:inferredReturnComment:scope=members|all|nonPrivate
       |-P:inferredReturnComment:maxTypeLength=<positive-int>
+      |-P:inferredReturnComment:managedTag=<single-line-text>
       |-P:inferredReturnComment:showTypeArgs=true|false
       |-P:inferredReturnComment:showTypeParamNames=true|false""".stripMargin
   )
@@ -40,6 +41,7 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
     var methodRegex = ".*"
     var scope = Scope.Members
     var maxTypeLength = 80
+    var managedTag = DefaultManagedTag
     var showTypeArgs = true
     var showTypeParamNames = true
     var ok = true
@@ -59,6 +61,12 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
           case None =>
             ok = false
             throw new IllegalArgumentException(s"Invalid $PluginName maxTypeLength: ${option.stripPrefix("maxTypeLength=")}")
+      case option if option.startsWith("managedTag=") =>
+        ManagedTagOption.fromOption(option.stripPrefix("managedTag=")) match
+          case Some(value) => managedTag = value
+          case None =>
+            ok = false
+            throw new IllegalArgumentException(s"Invalid $PluginName managedTag: ${option.stripPrefix("managedTag=")}")
       case option if option.startsWith("showTypeArgs=") =>
         BooleanOption.fromOption(option.stripPrefix("showTypeArgs=")) match
           case Some(value) => showTypeArgs = value
@@ -84,18 +92,24 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
       }
 
     if ok then
-      pattern.map(Config(_, scope, RenderSettings(maxTypeLength, showTypeArgs, showTypeParamNames)))
+      pattern.map(Config(_, scope, RenderSettings(maxTypeLength, managedTag, showTypeArgs, showTypeParamNames)))
     else None
 }
 
 object InferredReturnCommentPlugin {
   private val PluginName = "inferredReturnComment"
-  private val ManagedTag = "@inferredReturnType"
-  private val ManagedPrefix = "@inferredReturnType "
+  private val DefaultManagedTag = "@inferredReturnType"
   private val ManagedContinuationPrefix = "  "
 
   private final case class Config(methodPattern: Pattern, scope: Scope, renderSettings: RenderSettings)
-  private final case class RenderSettings(maxTypeLength: Int, showTypeArgs: Boolean, showTypeParamNames: Boolean)
+  private final case class RenderSettings(
+      maxTypeLength: Int,
+      managedTag: String,
+      showTypeArgs: Boolean,
+      showTypeParamNames: Boolean
+  ) {
+    def managedPrefix: String = s"$managedTag "
+  }
 
   private enum Scope {
     case Members, All, NonPrivate
@@ -112,6 +126,13 @@ object InferredReturnCommentPlugin {
   private object IntOption {
     def fromOption(value: String): Option[Int] =
       Try(value.toInt).toOption.filter(_ > 0)
+  }
+
+  private object ManagedTagOption {
+    def fromOption(value: String): Option[String] = {
+      val trimmed = value.trim
+      Option.when(trimmed.nonEmpty && !trimmed.contains('\n') && !trimmed.contains('\r'))(trimmed)
+    }
   }
 
   private object BooleanOption {
@@ -148,10 +169,10 @@ object InferredReturnCommentPlugin {
     def managedLines(tpe: Type, settings: RenderSettings)(using Context): Seq[String] = {
       val node = toNode(tpe, settings)
       val singleLine = renderSingle(node)
-      if ManagedPrefix.length + singleLine.length <= settings.maxTypeLength then
-        Seq(ManagedPrefix + singleLine)
+      if settings.managedPrefix.length + singleLine.length <= settings.maxTypeLength then
+        Seq(settings.managedPrefix + singleLine)
       else
-        ManagedTag +: renderBlock(node).map(line => ManagedContinuationPrefix + line)
+        settings.managedTag +: renderBlock(node).map(line => ManagedContinuationPrefix + line)
     }
 
     private def toNode(tpe: Type, settings: RenderSettings)(using Context): TypeNode = {
@@ -400,7 +421,7 @@ object InferredReturnCommentPlugin {
 
     private def updateMultilineBlock(raw: String, commentIndent: String, managedLines: Seq[String], newline: String): String =
       val lines = ArrayBuffer.from(raw.split(Pattern.quote(newline), -1).toSeq)
-      val managedRanges = managedEntryRanges(lines.toSeq)
+      val managedRanges = managedEntryRanges(lines.toSeq, config.renderSettings.managedTag)
       val linePrefix = preferredBlockLinePrefix(lines.toSeq, commentIndent)
       val managedRawLines = managedLines.map(line => linePrefix + line)
 
@@ -433,11 +454,11 @@ object InferredReturnCommentPlugin {
       }
       if hasStarStyle then s"$commentIndent * " else s"$commentIndent "
 
-    private def managedEntryRanges(lines: Seq[String]): List[(Int, Int)] = {
+    private def managedEntryRanges(lines: Seq[String], managedTag: String): List[(Int, Int)] = {
       val ranges = ArrayBuffer.empty[(Int, Int)]
       var index = 0
       while index < lines.length do
-        if isManagedStartLine(lines(index)) then
+        if isManagedStartLine(lines(index), managedTag) then
           val start = index
           index += 1
           while index < lines.length && isManagedContinuationLine(lines(index)) do
@@ -448,8 +469,10 @@ object InferredReturnCommentPlugin {
       ranges.toList
     }
 
-    private def isManagedStartLine(line: String): Boolean =
-      stripCommentLinePrefix(line).startsWith(ManagedTag)
+    private def isManagedStartLine(line: String, managedTag: String): Boolean = {
+      val content = stripCommentLinePrefix(line)
+      content == managedTag || content.startsWith(s"$managedTag ")
+    }
 
     private def isManagedContinuationLine(line: String): Boolean = {
       val content = stripCommentLinePrefix(line)

@@ -6,6 +6,7 @@ import java.nio.file.Paths
 
 object CompilerPluginTestSupport {
   val newline = "\n"
+  val defaultManagedTag = "@inferredReturnType"
 
   def rewrite(
       source: String,
@@ -67,16 +68,16 @@ object CompilerPluginTestSupport {
     assert(result.files("Sample.scala") == source)
   }
 
-  def managedCommentLines(text: String): Seq[String] =
+  def managedCommentLines(text: String, managedTag: String = defaultManagedTag): Seq[String] =
     normalize(text)
       .linesIterator
       .map(_.trim)
-      .filter(line => line.startsWith("* @inferredReturnType") || line.startsWith("*   "))
+      .filter(line => line.startsWith(s"* $managedTag") || line.startsWith("*   "))
       .toSeq
       .map(_.stripPrefix("* ").trim)
 
-  def managedCommentBody(text: String): String =
-    managedCommentLines(text).mkString(newline)
+  def managedCommentBody(text: String, managedTag: String = defaultManagedTag): String =
+    managedCommentLines(text, managedTag).mkString(newline)
 
   private def runCompiler(
       sources: Seq[(String, String)],

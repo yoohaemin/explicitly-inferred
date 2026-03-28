@@ -672,6 +672,138 @@ object InferredReturnCommentPluginTests extends TestSuite {
 
       assert(rewrite(input, extraOptions = Seq("showTypeParamNames=true", "showTypeParamNames=false")) == expected)
     }
+
+    test("managedTag customizes the single line marker") {
+      val input =
+        s"""object Sample {
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @explicitlyInferred Int
+           |   */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input, extraOptions = Seq("managedTag=@explicitlyInferred")) == expected)
+    }
+
+    test("managedTag customizes the multiline marker and stays idempotent") {
+      val input =
+        s"""object Sample {
+           |  final class Box[A]
+           |  final class Wrap[A]
+           |  type Alias = Wrap[String] | Box[Int]
+           |
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  final class Box[A]
+           |  final class Wrap[A]
+           |  type Alias = Wrap[String] | Box[Int]
+           |
+           |  /*
+           |   * @explicitlyInferred
+           |   *   Box[A = Int] |
+           |   *   Wrap[A = String]
+           |   */
+           |  def value = null.asInstanceOf[Alias]
+           |}
+           |""".stripMargin
+
+      val once = rewrite(input, extraOptions = Seq("managedTag=@explicitlyInferred", "maxTypeLength=20"))
+      assert(once == expected)
+      assert(rewrite(once, extraOptions = Seq("managedTag=@explicitlyInferred", "maxTypeLength=20")) == expected)
+    }
+
+    test("managedTag rewrites existing custom managed entries in place") {
+      val input =
+        s"""object Sample {
+           |  /*
+           |   * keep me
+           |   * @explicitlyInferred String
+           |   */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * keep me
+           |   * @explicitlyInferred Int
+           |   */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input, extraOptions = Seq("managedTag=@explicitlyInferred")) == expected)
+    }
+
+    test("managedTag does not manage legacy entries when customized") {
+      val input =
+        s"""object Sample {
+           |  /*
+           |   * keep me
+           |   * @inferredReturnType String
+           |   */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * keep me
+           |   * @inferredReturnType String
+           |   * @explicitlyInferred Int
+           |   */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val output = rewrite(input, extraOptions = Seq("managedTag=@explicitlyInferred"))
+      assert(output == expected)
+      assert(managedCommentBody(output, "@explicitlyInferred") == "@explicitlyInferred Int")
+    }
+
+    test("managedTag rejects empty and multiline values") {
+      val input =
+        s"""object Sample {
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      rewriteExpectFailure(input, extraOptions = Seq("managedTag="))
+      rewriteExpectFailure(input, extraOptions = Seq("managedTag=   "))
+      rewriteExpectFailure(input, extraOptions = Seq("managedTag=line1\nline2"))
+    }
+
+    test("managedTag uses the last configured value") {
+      val input =
+        s"""object Sample {
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @second Int
+           |   */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input, extraOptions = Seq("managedTag=@first", "managedTag=@second")) == expected)
+    }
   }
 
 }

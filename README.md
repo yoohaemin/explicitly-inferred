@@ -16,6 +16,7 @@ Example compiler flags:
 -Xplugin:/path/to/explicitly-inferred.jar
 -rewrite
 -P:inferredReturnComment:methodRegex=.*
+-P:inferredReturnComment:managedTag=@inferredReturnType
 ```
 
 ## Development
