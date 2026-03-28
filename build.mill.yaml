@@ -1,0 +1,4 @@
+extends: ScalaModule
+scalaVersion: 3.8.2
+mvnDeps:
+- org.scala-lang::scala3-compiler:3.8.2
