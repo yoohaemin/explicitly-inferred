@@ -15,6 +15,7 @@ import dotty.tools.dotc.util.SourceFile
 import dotty.tools.dotc.util.Spans.Span
 
 import java.util.regex.Pattern
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
@@ -56,23 +57,26 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
     def invalidMethodRegexRewrite(value: String): Nothing =
       throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $value")
 
-    def compileMethodRegex(value: String): Pattern =
-      Try(Pattern.compile(value)).getOrElse(invalidMethodRegex(value))
+    def compileMethodRegex(value: String): MethodRegexStep = {
+      val pattern = Try(Pattern.compile(value)).getOrElse(invalidMethodRegex(value))
+      MethodRegexStep(pattern, pattern.matcher("").groupCount(), namedGroups(value), None)
+    }
 
     options.foreach {
       case option if option.startsWith("methodRegex=") =>
         val value = option.stripPrefix("methodRegex=")
-        methodSteps += MethodRegexStep(compileMethodRegex(value), None)
+        methodSteps += compileMethodRegex(value)
       case option if option.startsWith("methodRegexRewrite=") =>
         val value = option.stripPrefix("methodRegexRewrite=")
         methodSteps.lastOption match
           case None =>
             invalidMethodRegexRewrite(value)
-          case Some(MethodRegexStep(_, Some(_))) =>
+          case Some(MethodRegexStep(_, _, _, Some(_))) =>
             invalidMethodRegexRewrite(value)
-          case Some(MethodRegexStep(pattern, None)) if pattern.matcher("").groupCount() == 0 =>
+          case Some(MethodRegexStep(_, 0, _, None)) =>
             invalidMethodRegexRewrite(value)
           case Some(step) =>
+            validateMethodRegexRewrite(value, step)
             methodSteps(methodSteps.size - 1) = step.copy(rewrite = Some(value))
       case option if option.startsWith("scope=") =>
         Scope.fromOption(option.stripPrefix("scope=")) match
@@ -108,7 +112,7 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
 
     val compiledMethodSteps =
       if methodSteps.nonEmpty then methodSteps.toList
-      else List(MethodRegexStep(compileMethodRegex(".*"), None))
+      else List(compileMethodRegex(".*"))
 
     Some(Config(compiledMethodSteps, scope, RenderSettings(maxTypeLength, managedTag, showTypeArgs, showTypeParamNames)))
 }
@@ -119,7 +123,12 @@ object InferredReturnCommentPlugin {
   private val ManagedContinuationPrefix = "  "
 
   private final case class Config(methodSteps: List[MethodRegexStep], scope: Scope, renderSettings: RenderSettings)
-  private final case class MethodRegexStep(pattern: Pattern, rewrite: Option[String])
+  private final case class MethodRegexStep(
+      pattern: Pattern,
+      groupCount: Int,
+      namedGroups: List[String],
+      rewrite: Option[String]
+  )
   private final case class RenderSettings(
       maxTypeLength: Int,
       managedTag: String,
@@ -159,6 +168,58 @@ object InferredReturnCommentPlugin {
       case "false" => Some(false)
       case _ => None
   }
+
+  private def namedGroups(regex: String): List[String] = {
+    val groups = ArrayBuffer.empty[String]
+    var index = 0
+    var escaped = false
+    var inCharClass = false
+
+    while index < regex.length do
+      val ch = regex.charAt(index)
+      if escaped then
+        escaped = false
+      else if ch == '\\' then
+        escaped = true
+      else if inCharClass then
+        if ch == ']' then inCharClass = false
+      else if ch == '[' then
+        inCharClass = true
+      else if ch == '('
+          && index + 3 < regex.length
+          && regex.charAt(index + 1) == '?'
+          && regex.charAt(index + 2) == '<'
+          && regex.charAt(index + 3) != '='
+          && regex.charAt(index + 3) != '!'
+      then
+        val nameStart = index + 3
+        val nameEnd = regex.indexOf('>', nameStart)
+        if nameEnd > nameStart then groups += regex.substring(nameStart, nameEnd)
+      index += 1
+
+    groups.toList
+  }
+
+  private def validateMethodRegexRewrite(rewrite: String, step: MethodRegexStep): Unit =
+    applyMethodRegexRewrite(validationMatcher(step), rewrite)
+
+  private def validationMatcher(step: MethodRegexStep): java.util.regex.Matcher = {
+    val builder = new StringBuilder
+    val namedGroupIterator = step.namedGroups.iterator
+    (1 to step.groupCount).foreach { _ =>
+      if namedGroupIterator.hasNext then builder.append(s"(?<${namedGroupIterator.next()}>)")
+      else builder.append("()")
+    }
+    Pattern.compile(builder.result()).matcher("")
+  }
+
+  private def applyMethodRegexRewrite(matcher: java.util.regex.Matcher, rewrite: String): String =
+    try matcher.replaceAll(rewrite)
+    catch
+      case cause: IllegalArgumentException =>
+        throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
+      case cause: IndexOutOfBoundsException =>
+        throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
 
   private object NormalizedTypeRenderer {
     private sealed trait TypeNode {
@@ -357,6 +418,8 @@ object InferredReturnCommentPlugin {
   private final class InferredReturnCommentPhase(config: Config) extends PluginPhase {
     import tpd.*
 
+    private val orderedCommentsByUnit = mutable.HashMap.empty[CompilationUnit, IndexedSeq[Comment]]
+
     override val phaseName: String = "inferredReturnCommentPhase"
     override val runsAfter: Set[String] = Set(TyperPhase.name)
     override val runsBefore: Set[String] = Set(Pickler.name)
@@ -376,19 +439,17 @@ object InferredReturnCommentPlugin {
         val source = ctx.compilationUnit.source
         val text = sourceText(source)
         val managedLines = NormalizedTypeRenderer.managedLines(tree.tpt.tpe, config.renderSettings)
-        val envelope = tree.envelope(source)
-        val nameStart = tree.span.start
-        val defStart = findKeyword(text, envelope.start, nameStart, "def").getOrElse(nameStart)
-        val defLineStart = lineStart(text, defStart)
-        val indent = text.substring(defLineStart, defStart)
+        val defLineStart = lineStart(text, tree.span.start)
+        val insertionLineStart = declarationAnchorLineStart(text, defLineStart)
+        val indent = text.substring(insertionLineStart, indentationEnd(text, insertionLineStart))
         val newline = detectNewline(text)
-        val commentOpt = nearestAttachedComment(ctx.compilationUnit, text, defLineStart)
+        val commentOpt = nearestAttachedComment(ctx.compilationUnit, text, insertionLineStart)
 
         commentOpt match
           case Some(comment) if isBlockComment(comment) =>
             patchSpan(comment.span, updateExistingBlockComment(comment, text, managedLines, newline))
           case _ =>
-            patchSpan(Span(defLineStart), newManagedBlock(indent, managedLines, newline))
+            patchSpan(Span(insertionLineStart), newManagedBlock(indent, managedLines, newline))
 
     private def isSkipped(symbol: Symbol, name: String)(using Context): Boolean =
       symbol == null ||
@@ -412,14 +473,6 @@ object InferredReturnCommentPlugin {
         }
         .isDefined
 
-    private def applyMethodRegexRewrite(matcher: java.util.regex.Matcher, rewrite: String): String =
-      try matcher.replaceAll(rewrite)
-      catch
-        case cause: IllegalArgumentException =>
-          throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
-        case cause: IndexOutOfBoundsException =>
-          throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
-
     private def scopeMatches(symbol: Symbol)(using Context): Boolean =
       val owner = symbol.denot.maybeOwner
       config.scope match
@@ -433,11 +486,13 @@ object InferredReturnCommentPlugin {
         Rewrites.patch(span, replacement)
 
     private def nearestAttachedComment(unit: CompilationUnit, text: String, defLineStart: Int): Option[Comment] =
-      unit.comments
-        .filter(_.span.end <= defLineStart)
-        .sortBy(_.span.end)
+      orderedComments(unit)
         .reverseIterator
+        .filter(_.span.end <= defLineStart)
         .find(comment => isAttachedGap(text.substring(comment.span.end, defLineStart)))
+
+    private def orderedComments(unit: CompilationUnit): IndexedSeq[Comment] =
+      orderedCommentsByUnit.getOrElseUpdate(unit, unit.comments.sortBy(_.span.end).toIndexedSeq)
 
     private def isAttachedGap(gap: String): Boolean =
       gap.forall(_.isWhitespace) && normalizedNewlineCount(gap) <= 1
@@ -546,22 +601,63 @@ object InferredReturnCommentPlugin {
         index -= 1
       index
 
-    private def findKeyword(text: String, start: Int, end: Int, keyword: String): Option[Int] =
-      val boundedStart = math.max(0, start)
-      val boundedEnd = math.min(end, text.length)
-      var index = boundedStart
-      while index <= boundedEnd - keyword.length do
-        if text.regionMatches(index, keyword, 0, keyword.length)
-            && isBoundary(text, index - 1)
-            && isBoundary(text, index + keyword.length)
-        then return Some(index)
-        index += 1
-      None
+    private def declarationAnchorLineStart(text: String, defLineStart: Int): Int = {
+      var currentLineStart = defLineStart
+      var anchorLineStart = defLineStart
+      var sawAnnotation = false
+      var continue = true
 
-    private def isBoundary(text: String, index: Int): Boolean =
-      if index < 0 || index >= text.length then true
-      else
-        val ch = text.charAt(index)
-        !(ch.isLetterOrDigit || ch == '_' || ch == '$')
+      while continue do
+        previousLineStart(text, currentLineStart) match
+          case Some(previousStart) =>
+            val previousText = lineText(text, previousStart).trim
+            if previousText.isEmpty then
+              continue = false
+            else if isAnnotationLine(previousText) || isCommentLine(previousText) then
+              currentLineStart = previousStart
+              if isAnnotationLine(previousText) then sawAnnotation = true
+              if sawAnnotation then anchorLineStart = previousStart
+            else
+              continue = false
+          case None =>
+            continue = false
+
+      anchorLineStart
+    }
+
+    private def indentationEnd(text: String, lineStart: Int): Int =
+      var index = lineStart
+      while index < text.length && {
+          val ch = text.charAt(index)
+          ch != '\n' && ch != '\r' && ch.isWhitespace
+        }
+      do index += 1
+      index
+
+    private def previousLineStart(text: String, currentLineStart: Int): Option[Int] =
+      Option.when(currentLineStart > 0) {
+        val previousLineEnd =
+          if text.charAt(currentLineStart - 1) == '\n' && currentLineStart >= 2 && text.charAt(currentLineStart - 2) == '\r' then
+            currentLineStart - 2
+          else if text.charAt(currentLineStart - 1) == '\n' || text.charAt(currentLineStart - 1) == '\r' then
+            currentLineStart - 1
+          else
+            currentLineStart
+        lineStart(text, previousLineEnd)
+      }
+
+    private def lineText(text: String, lineStart: Int): String = {
+      var index = lineStart
+      while index < text.length && text.charAt(index) != '\n' && text.charAt(index) != '\r' do
+        index += 1
+      text.substring(lineStart, index)
+    }
+
+    private def isAnnotationLine(line: String): Boolean =
+      line.startsWith("@")
+
+    private def isCommentLine(line: String): Boolean =
+      line.startsWith("//") || line.startsWith("/*") || line.startsWith("*") || line.startsWith("*/")
+
   }
 }

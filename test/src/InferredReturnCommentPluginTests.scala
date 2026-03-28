@@ -69,6 +69,50 @@ object InferredReturnCommentPluginTests extends TestSuite {
       assert(rewrite(input) == expected)
     }
 
+    test("inserts above annotations even when annotation arguments contain def") {
+      val input =
+        s"""object Sample {
+           |  @deprecated("def", "y")
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  @deprecated("def", "y")
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input) == expected)
+    }
+
+    test("inserts above annotated defs even when trivia before def contains def") {
+      val input =
+        s"""object Sample {
+           |  @deprecated("x", "y")
+           |  /* def in trivia */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  @deprecated("x", "y")
+           |  /* def in trivia */
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input) == expected)
+    }
+
     test("leaves explicit return types untouched") {
       val input =
         s"""object Sample {
@@ -615,6 +659,17 @@ object InferredReturnCommentPluginTests extends TestSuite {
       )
     }
 
+    test("rejects invalid method regex rewrite references even when no method matches") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def skip = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "prefix\\.(keep)",
+        extraOptions = Seq("methodRegexRewrite=$2", "methodRegex=keep")
+      )
+    }
+
     test("rejects invalid named method regex rewrite references when a match applies them") {
       rewriteExpectFailure(
         """object Sample {
@@ -622,6 +677,17 @@ object InferredReturnCommentPluginTests extends TestSuite {
           |}
           |""".stripMargin,
         methodRegex = "prefix\\.(?<name>keep)",
+        extraOptions = Seq("methodRegexRewrite=${missing}", "methodRegex=keep")
+      )
+    }
+
+    test("rejects invalid named method regex rewrite references before later stages can reject") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def `prefix.skip` = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "prefix\\.(?<name>skip)",
         extraOptions = Seq("methodRegexRewrite=${missing}", "methodRegex=keep")
       )
     }
