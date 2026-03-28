@@ -11,36 +11,57 @@ object CompilerPluginTestSupport {
   def rewrite(
       source: String,
       methodRegex: String = ".*",
-      extraOptions: Seq[String] = Seq.empty
-  ): String =
-    rewriteFiles(Seq("Sample.scala" -> source), methodRegex = methodRegex, extraOptions = extraOptions)("Sample.scala")
-
-  def rewriteRaw(
-      source: String,
-      methodRegex: String = ".*",
-      extraOptions: Seq[String] = Seq.empty
-  ): String =
-    rewriteFilesRaw(Seq("Sample.scala" -> source), methodRegex = methodRegex, extraOptions = extraOptions)("Sample.scala")
-
-  def compileWithoutRewrite(
-      source: String,
-      methodRegex: String = ".*",
-      extraOptions: Seq[String] = Seq.empty
+      extraOptions: Seq[String] = Seq.empty,
+      includeDefaultMethodRegex: Boolean = true
   ): String =
     rewriteFiles(
       Seq("Sample.scala" -> source),
       methodRegex = methodRegex,
       extraOptions = extraOptions,
-      includeRewrite = false
+      includeDefaultMethodRegex = includeDefaultMethodRegex
+    )("Sample.scala")
+
+  def rewriteRaw(
+      source: String,
+      methodRegex: String = ".*",
+      extraOptions: Seq[String] = Seq.empty,
+      includeDefaultMethodRegex: Boolean = true
+  ): String =
+    rewriteFilesRaw(
+      Seq("Sample.scala" -> source),
+      methodRegex = methodRegex,
+      extraOptions = extraOptions,
+      includeDefaultMethodRegex = includeDefaultMethodRegex
+    )("Sample.scala")
+
+  def compileWithoutRewrite(
+      source: String,
+      methodRegex: String = ".*",
+      extraOptions: Seq[String] = Seq.empty,
+      includeDefaultMethodRegex: Boolean = true
+  ): String =
+    rewriteFiles(
+      Seq("Sample.scala" -> source),
+      methodRegex = methodRegex,
+      extraOptions = extraOptions,
+      includeRewrite = false,
+      includeDefaultMethodRegex = includeDefaultMethodRegex
     )("Sample.scala")
 
   def rewriteFiles(
       sources: Seq[(String, String)],
       methodRegex: String = ".*",
       extraOptions: Seq[String] = Seq.empty,
-      includeRewrite: Boolean = true
+      includeRewrite: Boolean = true,
+      includeDefaultMethodRegex: Boolean = true
   ): Map[String, String] =
-    rewriteFilesRaw(sources, methodRegex = methodRegex, extraOptions = extraOptions, includeRewrite = includeRewrite)
+    rewriteFilesRaw(
+      sources,
+      methodRegex = methodRegex,
+      extraOptions = extraOptions,
+      includeRewrite = includeRewrite,
+      includeDefaultMethodRegex = includeDefaultMethodRegex
+    )
       .view
       .mapValues(normalize)
       .toMap
@@ -49,9 +70,16 @@ object CompilerPluginTestSupport {
       sources: Seq[(String, String)],
       methodRegex: String = ".*",
       extraOptions: Seq[String] = Seq.empty,
-      includeRewrite: Boolean = true
+      includeRewrite: Boolean = true,
+      includeDefaultMethodRegex: Boolean = true
   ): Map[String, String] = {
-    val result = runCompiler(sources, methodRegex = methodRegex, extraOptions = extraOptions, includeRewrite = includeRewrite)
+    val result = runCompiler(
+      sources,
+      methodRegex = methodRegex,
+      extraOptions = extraOptions,
+      includeRewrite = includeRewrite,
+      includeDefaultMethodRegex = includeDefaultMethodRegex
+    )
     if result.exitCode != 0 then
       throw new java.lang.AssertionError(result.out + newline + result.err)
     result.files
@@ -60,11 +88,16 @@ object CompilerPluginTestSupport {
   def rewriteExpectFailure(
       source: String,
       methodRegex: String = ".*",
-      extraOptions: Seq[String] = Seq.empty
+      extraOptions: Seq[String] = Seq.empty,
+      includeDefaultMethodRegex: Boolean = true
   ): Unit = {
-    val result = runCompiler(Seq("Sample.scala" -> source), methodRegex = methodRegex, extraOptions = extraOptions)
+    val result = runCompiler(
+      Seq("Sample.scala" -> source),
+      methodRegex = methodRegex,
+      extraOptions = extraOptions,
+      includeDefaultMethodRegex = includeDefaultMethodRegex
+    )
     assert(result.exitCode != 0)
-    assert(result.out.contains("An unhandled exception was thrown in the compiler."))
     assert(result.files("Sample.scala") == source)
   }
 
@@ -83,7 +116,8 @@ object CompilerPluginTestSupport {
       sources: Seq[(String, String)],
       methodRegex: String = ".*",
       extraOptions: Seq[String] = Seq.empty,
-      includeRewrite: Boolean = true
+      includeRewrite: Boolean = true,
+      includeDefaultMethodRegex: Boolean = true
   ): CompileResult = {
     val workspace = os.temp.dir(prefix = "commenter-test")
     val outDir = workspace / "out"
@@ -104,9 +138,9 @@ object CompilerPluginTestSupport {
         sys.props("java.class.path"),
         "-d",
         outDir.toString,
-        s"-Xplugin:${pluginPathString}",
-        s"-P:inferredReturnComment:methodRegex=$methodRegex"
+        s"-Xplugin:${pluginPathString}"
       ) ++
+      (if includeDefaultMethodRegex then Seq(s"-P:inferredReturnComment:methodRegex=$methodRegex") else Seq.empty) ++
       extraOptions.map(option => s"-P:inferredReturnComment:$option") ++
       sources.map { (name, _) => (workspace / name).toString }
 

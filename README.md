@@ -19,6 +19,14 @@ Example compiler flags:
 -P:inferredReturnComment:managedTag=@inferredReturnType
 ```
 
+`methodRegex` is repeatable and evaluated left to right. Add `methodRegexRewrite` immediately after a capturing `methodRegex` to rewrite the matched name before the next stage.
+
+```text
+-P:inferredReturnComment:methodRegex=prefix\.(keep)
+-P:inferredReturnComment:methodRegexRewrite=$1
+-P:inferredReturnComment:methodRegex=keep
+```
+
 ## Development
 
 Run the test suite:

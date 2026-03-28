@@ -25,11 +25,16 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
   override val description: String = "Adds inferred return-type comments during -rewrite"
   override val optionsHelp: Option[String] = Some(
     """-P:inferredReturnComment:methodRegex=<java-regex>
+      |-P:inferredReturnComment:methodRegexRewrite=<java-replacement>
       |-P:inferredReturnComment:scope=members|all|nonPrivate
       |-P:inferredReturnComment:maxTypeLength=<positive-int>
       |-P:inferredReturnComment:managedTag=<single-line-text>
       |-P:inferredReturnComment:showTypeArgs=true|false
-      |-P:inferredReturnComment:showTypeParamNames=true|false""".stripMargin
+      |-P:inferredReturnComment:showTypeParamNames=true|false
+      |
+      |Repeat methodRegex to build a left-to-right match pipeline.
+      |methodRegexRewrite must immediately follow a capturing methodRegex and
+      |rewrites the matched name before the next methodRegex stage.""".stripMargin
   )
 
   override def initialize(options: List[String])(using Context): List[PluginPhase] =
@@ -38,62 +43,74 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
       case None => Nil
 
   private def parseConfig(options: List[String])(using Context): Option[Config] =
-    var methodRegex = ".*"
+    val methodSteps = ArrayBuffer.empty[MethodRegexStep]
     var scope = Scope.Members
     var maxTypeLength = 80
     var managedTag = DefaultManagedTag
     var showTypeArgs = true
     var showTypeParamNames = true
-    var ok = true
+
+    def invalidMethodRegex(value: String): Nothing =
+      throw new IllegalArgumentException(s"Invalid $PluginName methodRegex: $value")
+
+    def invalidMethodRegexRewrite(value: String): Nothing =
+      throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $value")
+
+    def compileMethodRegex(value: String): Pattern =
+      Try(Pattern.compile(value)).getOrElse(invalidMethodRegex(value))
 
     options.foreach {
       case option if option.startsWith("methodRegex=") =>
-        methodRegex = option.stripPrefix("methodRegex=")
+        val value = option.stripPrefix("methodRegex=")
+        methodSteps += MethodRegexStep(compileMethodRegex(value), None)
+      case option if option.startsWith("methodRegexRewrite=") =>
+        val value = option.stripPrefix("methodRegexRewrite=")
+        methodSteps.lastOption match
+          case None =>
+            invalidMethodRegexRewrite(value)
+          case Some(MethodRegexStep(_, Some(_))) =>
+            invalidMethodRegexRewrite(value)
+          case Some(MethodRegexStep(pattern, None)) if pattern.matcher("").groupCount() == 0 =>
+            invalidMethodRegexRewrite(value)
+          case Some(step) =>
+            methodSteps(methodSteps.size - 1) = step.copy(rewrite = Some(value))
       case option if option.startsWith("scope=") =>
         Scope.fromOption(option.stripPrefix("scope=")) match
           case Some(value) => scope = value
           case None =>
-            ok = false
             throw new IllegalArgumentException(s"Unknown $PluginName scope: ${option.stripPrefix("scope=")}")
       case option if option.startsWith("maxTypeLength=") =>
         IntOption.fromOption(option.stripPrefix("maxTypeLength=")) match
           case Some(value) => maxTypeLength = value
           case None =>
-            ok = false
             throw new IllegalArgumentException(s"Invalid $PluginName maxTypeLength: ${option.stripPrefix("maxTypeLength=")}")
       case option if option.startsWith("managedTag=") =>
         ManagedTagOption.fromOption(option.stripPrefix("managedTag=")) match
           case Some(value) => managedTag = value
           case None =>
-            ok = false
             throw new IllegalArgumentException(s"Invalid $PluginName managedTag: ${option.stripPrefix("managedTag=")}")
       case option if option.startsWith("showTypeArgs=") =>
         BooleanOption.fromOption(option.stripPrefix("showTypeArgs=")) match
           case Some(value) => showTypeArgs = value
           case None =>
-            ok = false
             throw new IllegalArgumentException(s"Invalid $PluginName showTypeArgs: ${option.stripPrefix("showTypeArgs=")}")
       case option if option.startsWith("showTypeParamNames=") =>
         BooleanOption.fromOption(option.stripPrefix("showTypeParamNames=")) match
           case Some(value) => showTypeParamNames = value
           case None =>
-            ok = false
             throw new IllegalArgumentException(s"Invalid $PluginName showTypeParamNames: ${option.stripPrefix("showTypeParamNames=")}")
       case option =>
-        ok = false
         throw new IllegalArgumentException(s"Unknown $PluginName option: $option")
     }
 
-    val pattern =
-      Try(Pattern.compile(methodRegex)).toOption.orElse {
-        ok = false
-        throw new IllegalArgumentException(s"Invalid $PluginName methodRegex: $methodRegex")
-        None
-      }
+    if methodSteps.lastOption.exists(_.rewrite.nonEmpty) then
+      invalidMethodRegexRewrite(methodSteps.last.rewrite.get)
 
-    if ok then
-      pattern.map(Config(_, scope, RenderSettings(maxTypeLength, managedTag, showTypeArgs, showTypeParamNames)))
-    else None
+    val compiledMethodSteps =
+      if methodSteps.nonEmpty then methodSteps.toList
+      else List(MethodRegexStep(compileMethodRegex(".*"), None))
+
+    Some(Config(compiledMethodSteps, scope, RenderSettings(maxTypeLength, managedTag, showTypeArgs, showTypeParamNames)))
 }
 
 object InferredReturnCommentPlugin {
@@ -101,7 +118,8 @@ object InferredReturnCommentPlugin {
   private val DefaultManagedTag = "@inferredReturnType"
   private val ManagedContinuationPrefix = "  "
 
-  private final case class Config(methodPattern: Pattern, scope: Scope, renderSettings: RenderSettings)
+  private final case class Config(methodSteps: List[MethodRegexStep], scope: Scope, renderSettings: RenderSettings)
+  private final case class MethodRegexStep(pattern: Pattern, rewrite: Option[String])
   private final case class RenderSettings(
       maxTypeLength: Int,
       managedTag: String,
@@ -377,8 +395,30 @@ object InferredReturnCommentPlugin {
       symbol == dotty.tools.dotc.core.Symbols.NoSymbol ||
       symbol.isConstructor ||
       symbol.is(Flags.Synthetic) ||
-      !config.methodPattern.matcher(name).matches() ||
+      !methodNameMatches(name) ||
       !scopeMatches(symbol)
+
+    private def methodNameMatches(name: String): Boolean =
+      config.methodSteps
+        .foldLeft(Option(name)) { (currentName, step) =>
+          currentName.flatMap { value =>
+            val matcher = step.pattern.matcher(value)
+            if !matcher.matches() then None
+            else
+              step.rewrite match
+                case Some(rewrite) => Some(applyMethodRegexRewrite(matcher, rewrite))
+                case None => Some(value)
+          }
+        }
+        .isDefined
+
+    private def applyMethodRegexRewrite(matcher: java.util.regex.Matcher, rewrite: String): String =
+      try matcher.replaceAll(rewrite)
+      catch
+        case cause: IllegalArgumentException =>
+          throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
+        case cause: IndexOutOfBoundsException =>
+          throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
 
     private def scopeMatches(symbol: Symbol)(using Context): Boolean =
       val owner = symbol.denot.maybeOwner

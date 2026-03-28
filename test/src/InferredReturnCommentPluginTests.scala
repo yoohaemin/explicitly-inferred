@@ -138,6 +138,200 @@ object InferredReturnCommentPluginTests extends TestSuite {
       assert(rewrite(input, methodRegex = "keep") == expected)
     }
 
+    test("method regex stages chain left to right") {
+      val input =
+        s"""object Sample {
+           |  def keep123 = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def keep123 = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input, methodRegex = ".*123", extraOptions = Seq("methodRegex=keep123")) == expected)
+    }
+
+    test("method regex rewrite feeds the next stage") {
+      val input =
+        s"""object Sample {
+           |  def `prefix.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def `prefix.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "prefix\\.(keep)",
+          extraOptions = Seq(
+            "methodRegexRewrite=$1",
+            "methodRegex=keep"
+          )
+        ) == expected
+      )
+    }
+
+    test("method regex pipeline supports multiple rewrite stages") {
+      val input =
+        s"""object Sample {
+           |  def `prefix.middle.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def `prefix.middle.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "prefix\\.(.*)",
+          extraOptions = Seq(
+            "methodRegexRewrite=$1",
+            "methodRegex=(.*)\\.(.*)",
+            "methodRegexRewrite=$2",
+            "methodRegex=keep"
+          )
+        ) == expected
+      )
+    }
+
+    test("method regex rewrite may replace with a literal string") {
+      val input =
+        s"""object Sample {
+           |  def `prefix.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def `prefix.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "prefix\\.(keep)",
+          extraOptions = Seq(
+            "methodRegexRewrite=renamed",
+            "methodRegex=renamed"
+          )
+        ) == expected
+      )
+    }
+
+    test("method regex rewrite supports named capture groups") {
+      val input =
+        s"""object Sample {
+           |  def `prefix.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def `prefix.keep` = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "prefix\\.(?<name>keep)",
+          extraOptions = Seq(
+            "methodRegexRewrite=${name}",
+            "methodRegex=keep"
+          )
+        ) == expected
+      )
+    }
+
+    test("method regex later stages can reject rewritten names") {
+      val input =
+        s"""object Sample {
+           |  def `prefix.keep` = 1
+           |  def `prefix.skip` = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def `prefix.keep` = 1
+           |  def `prefix.skip` = 2
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "prefix\\.(.*)",
+          extraOptions = Seq(
+            "methodRegexRewrite=$1",
+            "methodRegex=keep"
+          )
+        ) == expected
+      )
+    }
+
+    test("capturing method regex still works without a rewrite") {
+      val input =
+        s"""object Sample {
+           |  def keep123 = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def keep123 = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input, methodRegex = "(keep)(123)") == expected)
+    }
+
     test("normalizes aliases and orders union members deterministically") {
       val input =
         s"""object Sample {
@@ -363,6 +557,72 @@ object InferredReturnCommentPluginTests extends TestSuite {
           |}
           |""".stripMargin,
         methodRegex = "("
+      )
+    }
+
+    test("rejects method regex rewrite without a preceding regex") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def value = 1
+          |}
+          |""".stripMargin,
+        extraOptions = Seq("methodRegexRewrite=$1"),
+        includeDefaultMethodRegex = false
+      )
+    }
+
+    test("rejects method regex rewrite after a regex with no capture groups") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def keep = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "keep",
+        extraOptions = Seq("methodRegexRewrite=$1", "methodRegex=keep")
+      )
+    }
+
+    test("rejects a trailing method regex rewrite with no next stage") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def keep = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "(keep)",
+        extraOptions = Seq("methodRegexRewrite=$1")
+      )
+    }
+
+    test("rejects multiple rewrites for one method regex stage") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def keep = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "(keep)",
+        extraOptions = Seq("methodRegexRewrite=$1", "methodRegexRewrite=$1", "methodRegex=keep")
+      )
+    }
+
+    test("rejects invalid method regex rewrite references when a match applies them") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def `prefix.keep` = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "prefix\\.(keep)",
+        extraOptions = Seq("methodRegexRewrite=$2", "methodRegex=keep")
+      )
+    }
+
+    test("rejects invalid named method regex rewrite references when a match applies them") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def `prefix.keep` = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "prefix\\.(?<name>keep)",
+        extraOptions = Seq("methodRegexRewrite=${missing}", "methodRegex=keep")
       )
     }
 
