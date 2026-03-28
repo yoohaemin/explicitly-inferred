@@ -10,22 +10,167 @@ Add the plugin artifact to your build and pass it to the Scala 3 compiler. The p
 com.yoohaemin::explicitly-inferred:<version>
 ```
 
-Example compiler flags:
+The plugin rewrites source files in place, so you must compile with `-rewrite`.
 
 ```text
 -Xplugin:/path/to/explicitly-inferred.jar
 -rewrite
+```
+
+When a `def` has no explicit return type and matches the configured filters, the plugin inserts or updates a managed block comment immediately above it.
+
+Before:
+
+```scala
+object Sample {
+  def value = 1
+}
+```
+
+After:
+
+```scala
+object Sample {
+  /*
+   * @inferredReturnType Int
+   */
+  def value = 1
+}
+```
+
+### Basic Flags
+
+Start with the defaults:
+
+```text
 -P:inferredReturnComment:methodRegex=.*
 -P:inferredReturnComment:managedTag=@inferredReturnType
 ```
 
-`methodRegex` is repeatable and evaluated left to right. Add `methodRegexRewrite` immediately after a capturing `methodRegex` to rewrite the matched name before the next stage.
+That is usually enough to rewrite inferred member defs with the default managed tag.
+
+### Option Reference
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `methodRegex=<java-regex>` | `.*` | Matches the full simple method name. Repeat it to build a left-to-right name-matching pipeline. |
+| `methodRegexRewrite=<java-replacement>` | none | Rewrites the name matched by the immediately preceding capturing `methodRegex` before the next regex stage runs. |
+| `scope=members\|all\|nonPrivate` | `members` | Controls which defs are eligible: class/object members only, all defs including locals, or non-private members only. |
+| `maxTypeLength=<positive-int>` | `80` | Keeps the managed entry on one line when it fits; otherwise emits a managed multiline block. |
+| `managedTag=<single-line-text>` | `@inferredReturnType` | Changes the marker used for managed entries. |
+| `showTypeArgs=true\|false` | `true` | Shows or suppresses type arguments in rendered types. |
+| `showTypeParamNames=true\|false` | `true` | Shows type parameter labels such as `A = Int` instead of positional type arguments. |
+
+### Regex Pipeline
+
+`methodRegex` uses Java regex and matches the full simple def name, not a substring. If you want substring-like behavior, write that explicitly in the regex, for example `.*keep.*`.
+
+`methodRegex` is repeatable and evaluated left to right. Each stage sees the current name. If a stage has a matching `methodRegexRewrite`, the rewritten name becomes the input to the next `methodRegex`.
+
+Rules:
+
+- `methodRegexRewrite` must immediately follow a capturing `methodRegex`.
+- A rewrite is invalid after a regex with no capture groups.
+- A trailing rewrite with no next `methodRegex` stage is invalid.
+- Rewrites use Java replacement syntax, so both numbered (`$1`) and named (`${name}`) groups work.
+- Rewrites may also be literal text.
+
+Simple prefix stripping:
 
 ```text
 -P:inferredReturnComment:methodRegex=prefix\.(keep)
 -P:inferredReturnComment:methodRegexRewrite=$1
 -P:inferredReturnComment:methodRegex=keep
 ```
+
+Named capture groups:
+
+```text
+-P:inferredReturnComment:methodRegex=prefix\.(?<name>keep)
+-P:inferredReturnComment:methodRegexRewrite=${name}
+-P:inferredReturnComment:methodRegex=keep
+```
+
+Multiple rewrite stages:
+
+```text
+-P:inferredReturnComment:methodRegex=prefix\.(.*)
+-P:inferredReturnComment:methodRegexRewrite=$1
+-P:inferredReturnComment:methodRegex=(.*)\.(.*)
+-P:inferredReturnComment:methodRegexRewrite=$2
+-P:inferredReturnComment:methodRegex=keep
+```
+
+Literal rewrites are also valid:
+
+```text
+-P:inferredReturnComment:methodRegex=prefix\.(keep)
+-P:inferredReturnComment:methodRegexRewrite=renamed
+-P:inferredReturnComment:methodRegex=renamed
+```
+
+### Common Configurations
+
+Rewrite only methods named `keep`:
+
+```text
+-P:inferredReturnComment:methodRegex=keep
+```
+
+Include local defs as well as members:
+
+```text
+-P:inferredReturnComment:scope=all
+```
+
+Skip private members while keeping protected ones:
+
+```text
+-P:inferredReturnComment:scope=nonPrivate
+```
+
+Use a custom managed tag:
+
+```text
+-P:inferredReturnComment:managedTag=@explicitlyInferred
+```
+
+Force multiline output earlier:
+
+```text
+-P:inferredReturnComment:maxTypeLength=20
+```
+
+Hide type parameter labels:
+
+```text
+-P:inferredReturnComment:showTypeParamNames=false
+```
+
+Hide type arguments entirely:
+
+```text
+-P:inferredReturnComment:showTypeArgs=false
+```
+
+### Behavior Notes
+
+- The plugin only touches defs with inferred return types. If a def already has `: Type`, it is left alone.
+- Managed comments are updated in place, so rerunning with the same settings is idempotent.
+- The plugin skips synthetic defs.
+- With the default `scope=members`, local defs are not rewritten.
+- If `managedTag` is customized, only entries with that tag are treated as managed on subsequent rewrites.
+
+### Troubleshooting
+
+If nothing changes, check these first:
+
+- `-rewrite` is present.
+- The def has no explicit return type.
+- The def name matches the full `methodRegex` pipeline.
+- The current `scope` includes that def.
+- A `methodRegexRewrite` is attached only to a capturing regex and is followed by another `methodRegex`.
+- Replacement references such as `$2` or `${missing}` are valid for the preceding regex.
 
 ## Development
 
