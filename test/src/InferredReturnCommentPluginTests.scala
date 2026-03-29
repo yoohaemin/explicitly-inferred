@@ -295,6 +295,66 @@ object InferredReturnCommentPluginTests extends TestSuite {
       )
     }
 
+    test("method regex literal rewrite applies only once for a full match") {
+      val input =
+        s"""object Sample {
+           |  def keep = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def keep = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "(.*)",
+          extraOptions = Seq(
+            "methodRegexRewrite=renamed",
+            "methodRegex=renamed"
+          )
+        ) == expected
+      )
+    }
+
+    test("method regex capture rewrite applies only once for a full match") {
+      val input =
+        s"""object Sample {
+           |  def keep = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  def keep = 1
+           |  def skip = 2
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "(.*)",
+          extraOptions = Seq(
+            "methodRegexRewrite=[$1]",
+            "methodRegex=\\[keep\\]"
+          )
+        ) == expected
+      )
+    }
+
     test("method regex rewrite supports named capture groups") {
       val input =
         s"""object Sample {
@@ -689,6 +749,33 @@ object InferredReturnCommentPluginTests extends TestSuite {
           |""".stripMargin,
         methodRegex = "prefix\\.(?<name>skip)",
         extraOptions = Seq("methodRegexRewrite=${missing}", "methodRegex=keep")
+      )
+    }
+
+    test("rejects invalid named method regex rewrite references inside quoted literals") {
+      rewriteExpectFailure(
+        """object Sample {
+          |  def skip = 1
+          |}
+          |""".stripMargin,
+        methodRegex = "(.*\\Q(?<foo>)\\E)",
+        extraOptions = Seq("methodRegexRewrite=${foo}", "methodRegex=keep")
+      )
+    }
+
+    test("allows numbered method regex rewrite references for quoted literal syntax") {
+      val input =
+        s"""object Sample {
+           |  def skip = 1
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "(.*\\Q(?<foo>)\\E)",
+          extraOptions = Seq("methodRegexRewrite=$1", "methodRegex=keep")
+        ) == input
       )
     }
 

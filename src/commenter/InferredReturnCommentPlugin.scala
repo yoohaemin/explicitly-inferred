@@ -14,9 +14,11 @@ import dotty.tools.dotc.typer.TyperPhase
 import dotty.tools.dotc.util.SourceFile
 import dotty.tools.dotc.util.Spans.Span
 
+import java.lang.reflect.InaccessibleObjectException
 import java.util.regex.Pattern
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.jdk.CollectionConverters.*
 import scala.util.Try
 
 final class InferredReturnCommentPlugin extends StandardPlugin {
@@ -59,7 +61,7 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
 
     def compileMethodRegex(value: String): MethodRegexStep = {
       val pattern = Try(Pattern.compile(value)).getOrElse(invalidMethodRegex(value))
-      MethodRegexStep(pattern, pattern.matcher("").groupCount(), namedGroups(value), None)
+      MethodRegexStep(pattern, pattern.matcher("").groupCount(), namedGroups(pattern), None)
     }
 
     options.foreach {
@@ -126,7 +128,7 @@ object InferredReturnCommentPlugin {
   private final case class MethodRegexStep(
       pattern: Pattern,
       groupCount: Int,
-      namedGroups: List[String],
+      namedGroups: List[(Int, String)],
       rewrite: Option[String]
   )
   private final case class RenderSettings(
@@ -169,56 +171,66 @@ object InferredReturnCommentPlugin {
       case _ => None
   }
 
-  private def namedGroups(regex: String): List[String] = {
-    val groups = ArrayBuffer.empty[String]
-    var index = 0
-    var escaped = false
-    var inCharClass = false
+  private val patternNamedGroupsMethod =
+    try
+      val method = classOf[Pattern].getDeclaredMethod("namedGroups")
+      method.setAccessible(true)
+      method
+    catch
+      case cause: NoSuchMethodException =>
+        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
+      case cause: InaccessibleObjectException =>
+        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
+      case cause: SecurityException =>
+        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
 
-    while index < regex.length do
-      val ch = regex.charAt(index)
-      if escaped then
-        escaped = false
-      else if ch == '\\' then
-        escaped = true
-      else if inCharClass then
-        if ch == ']' then inCharClass = false
-      else if ch == '[' then
-        inCharClass = true
-      else if ch == '('
-          && index + 3 < regex.length
-          && regex.charAt(index + 1) == '?'
-          && regex.charAt(index + 2) == '<'
-          && regex.charAt(index + 3) != '='
-          && regex.charAt(index + 3) != '!'
-      then
-        val nameStart = index + 3
-        val nameEnd = regex.indexOf('>', nameStart)
-        if nameEnd > nameStart then groups += regex.substring(nameStart, nameEnd)
-      index += 1
-
-    groups.toList
-  }
+  private def namedGroups(pattern: Pattern): List[(Int, String)] =
+    try
+      patternNamedGroupsMethod.invoke(pattern) match
+        case named: java.util.Map[?, ?] =>
+          named.asInstanceOf[java.util.Map[String, java.lang.Integer]].entrySet().asScala.toSeq
+            .map { entry =>
+              entry.getValue.intValue() -> entry.getKey
+            }
+            .sortBy(_._1)
+            .toList
+        case _ =>
+          throw new IllegalStateException("Unexpected Pattern.namedGroups result")
+    catch
+      case cause: IllegalAccessException =>
+        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
+      case cause: java.lang.reflect.InvocationTargetException =>
+        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
 
   private def validateMethodRegexRewrite(rewrite: String, step: MethodRegexStep): Unit =
     applyMethodRegexRewrite(validationMatcher(step), rewrite)
 
   private def validationMatcher(step: MethodRegexStep): java.util.regex.Matcher = {
     val builder = new StringBuilder
-    val namedGroupIterator = step.namedGroups.iterator
-    (1 to step.groupCount).foreach { _ =>
-      if namedGroupIterator.hasNext then builder.append(s"(?<${namedGroupIterator.next()}>)")
-      else builder.append("()")
+    val namedGroupByIndex = step.namedGroups.toMap
+    (1 to step.groupCount).foreach { index =>
+      namedGroupByIndex.get(index) match
+        case Some(name) => builder.append(s"(?<$name>)")
+        case None => builder.append("()")
     }
-    Pattern.compile(builder.result()).matcher("")
+    val matcher = Pattern.compile(builder.result()).matcher("")
+    if !matcher.matches() then
+      throw new IllegalStateException("Internal validation regex did not match")
+    matcher
   }
 
   private def applyMethodRegexRewrite(matcher: java.util.regex.Matcher, rewrite: String): String =
-    try matcher.replaceAll(rewrite)
+    try
+      val builder = new StringBuffer
+      matcher.appendReplacement(builder, rewrite)
+      matcher.appendTail(builder)
+      builder.toString
     catch
       case cause: IllegalArgumentException =>
         throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
       case cause: IndexOutOfBoundsException =>
+        throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
+      case cause: IllegalStateException =>
         throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
 
   private object NormalizedTypeRenderer {
