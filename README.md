@@ -43,11 +43,13 @@ addCompilerPlugin(
 )
 ```
 
-The plugin rewrites source files in place, so you must compile with `-rewrite`. If you wire it through a build tool as a compiler plugin dependency, the build tool provides the `-Xplugin` path and you only need to add the plugin options and `-rewrite`.
+The plugin rewrites source files in place, so you must compile with `-rewrite`. This project itself is built with `-no-indent` and `-old-syntax`. If you wire the plugin through a build tool as a compiler plugin dependency, the build tool provides the `-Xplugin` path and you only need to add the syntax flags you want, the plugin options, and `-rewrite`.
 
 The raw compiler flags look like this:
 
 ```text
+-no-indent
+-old-syntax
 -Xplugin:/path/to/explicitly-inferred.jar
 -rewrite
 ```

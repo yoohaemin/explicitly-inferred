@@ -7,6 +7,7 @@ import java.nio.file.Paths
 object CompilerPluginTestSupport {
   val newline = "\n"
   val defaultManagedTag = "@inferredReturnType"
+  val defaultSyntaxOptions = Seq("-no-indent", "-old-syntax")
 
   def rewrite(
       source: String,
@@ -132,6 +133,7 @@ object CompilerPluginTestSupport {
       sys.props("java.class.path"),
       "dotty.tools.dotc.Main"
     ) ++
+      defaultSyntaxOptions ++
       (if includeRewrite then Seq("-rewrite") else Seq.empty) ++
       Seq(
         "-classpath",
