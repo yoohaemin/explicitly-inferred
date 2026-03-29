@@ -231,11 +231,19 @@ Publish to the local Ivy repository:
 
 ## Release
 
-The release workflow publishes every supported compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed.
+The release workflow publishes every supported compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed. It uses Mill's `SonatypeCentralPublishModule/publishAll` entrypoint with `plugin[__].publishArtifacts`, so all Scala-version variants are signed and uploaded as one Central bundle.
 
 ```bash
 git tag v0.1.0
 git push origin master --follow-tags
+```
+
+The equivalent manual release command is:
+
+```bash
+./mill mill.javalib.SonatypeCentralPublishModule/publishAll \
+  --publishArtifacts 'plugin[__].publishArtifacts' \
+  --bundleName "com.yoohaemin-explicitly-inferred-v0.1.0"
 ```
 
 Use a new version when releasing the corrected compiler-plugin coordinates. The already-published `0.1.0-M1` artifact uses library-style `_3` coordinates and should be treated as superseded rather than reused.
