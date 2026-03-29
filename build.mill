@@ -1,0 +1,66 @@
+package build
+
+import mill.*
+import mill.scalalib.*
+import mill.scalalib.publish.*
+import mill.util.VcsVersionModule
+
+object `package` extends Module {
+  private val repoRoot = os.pwd
+
+  val supportedScalaVersions = Seq(
+    "3.5.0",
+    "3.5.1",
+    "3.5.2",
+    "3.6.0",
+    "3.6.1",
+    "3.6.2",
+    "3.6.3",
+    "3.6.4",
+    "3.7.0",
+    "3.7.1",
+    "3.7.2",
+    "3.7.3",
+    "3.7.4",
+    "3.8.0",
+    "3.8.1",
+    "3.8.2"
+  )
+
+  object plugin extends Cross[PluginModule](supportedScalaVersions) {
+    def defaultCrossSegments = Seq(supportedScalaVersions.last)
+  }
+
+  trait PluginModule extends CrossScalaModule with PublishModule with VcsVersionModule {
+    def scalaVersion = crossValue
+    override def artifactName = "explicitly-inferred"
+    override def artifactScalaVersion = scalaVersion()
+
+    override def sources = Task.Sources(repoRoot / "src")
+    override def resources = Task.Sources()
+
+    def mvnDeps = Seq(
+      mvn"org.scala-lang::scala3-compiler:${scalaVersion()}"
+    )
+
+    def pomSettings = PomSettings(
+      description = "Scala 3 compiler plugin that adds explicit inferred return-type comments during -rewrite",
+      organization = "com.yoohaemin",
+      url = "https://github.com/yoohaemin/explicitly-inferred",
+      licenses = Seq(License.`Apache-2.0`),
+      versionControl = VersionControl.github("yoohaemin", "explicitly-inferred"),
+      developers = Seq(Developer("yoohaemin", "Haemin Yoo", "https://github.com/yoohaemin"))
+    )
+
+    object test extends ScalaTests with TestModule.Utest {
+      override def sources = Task.Sources(repoRoot / "test" / "src")
+      override def resources = Task.Sources()
+
+      override def mvnDeps = super.mvnDeps() ++ Seq(
+        mvn"com.lihaoyi::utest:0.9.1",
+        mvn"com.lihaoyi::os-lib:0.11.5",
+        mvn"org.scala-lang::scala3-compiler:${PluginModule.this.scalaVersion()}"
+      )
+    }
+  }
+}

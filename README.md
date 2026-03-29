@@ -4,13 +4,48 @@
 
 ## Usage
 
-Add the plugin artifact to your build and pass it to the Scala 3 compiler. The published artifact coordinates are:
+`explicitly-inferred` is a compiler plugin, so it is published once per exact Scala compiler version. The Maven coordinates look like:
 
 ```text
-com.yoohaemin::explicitly-inferred:<version>
+com.yoohaemin:explicitly-inferred_<scala-version>:<plugin-version>
 ```
 
-The plugin rewrites source files in place, so you must compile with `-rewrite`.
+For example, Scala `3.8.2` resolves:
+
+```text
+com.yoohaemin:explicitly-inferred_3.8.2:<plugin-version>
+```
+
+Supported Scala compiler versions are:
+
+```text
+3.5.0, 3.5.1, 3.5.2,
+3.6.0, 3.6.1, 3.6.2, 3.6.3, 3.6.4,
+3.7.0, 3.7.1, 3.7.2, 3.7.3, 3.7.4,
+3.8.0, 3.8.1, 3.8.2
+```
+
+Use full-version cross publishing when you add it to your build.
+
+Mill:
+
+```scala
+def scalacPluginIvyDeps = Agg(
+  ivy"com.yoohaemin:::explicitly-inferred:<plugin-version>"
+)
+```
+
+sbt:
+
+```scala
+addCompilerPlugin(
+  "com.yoohaemin" %% "explicitly-inferred" % "<plugin-version>" cross CrossVersion.full
+)
+```
+
+The plugin rewrites source files in place, so you must compile with `-rewrite`. If you wire it through a build tool as a compiler plugin dependency, the build tool provides the `-Xplugin` path and you only need to add the plugin options and `-rewrite`.
+
+The raw compiler flags look like this:
 
 ```text
 -Xplugin:/path/to/explicitly-inferred.jar
@@ -177,23 +212,31 @@ If nothing changes, check these first:
 Run the test suite:
 
 ```bash
-./mill test
+./mill 'plugin[3.8.2].test.testCached'
+```
+
+Run the test suite across every supported Scala compiler version:
+
+```bash
+./mill 'plugin[__].test.testCached'
 ```
 
 Publish to the local Ivy repository:
 
 ```bash
-./mill publishLocal
+./mill 'plugin[__].publishLocal'
 ```
 
 ## Release
 
-The release workflow publishes to Maven Central when a `vX.Y.Z` tag is pushed.
+The release workflow publishes every supported compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed.
 
 ```bash
 git tag v0.1.0
 git push origin master --follow-tags
 ```
+
+Use a new version when releasing the corrected compiler-plugin coordinates. The already-published `0.1.0-M1` artifact uses library-style `_3` coordinates and should be treated as superseded rather than reused.
 
 Before the first release, configure the GitHub repository secrets used by Mill:
 

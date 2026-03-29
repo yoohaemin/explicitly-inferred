@@ -21,7 +21,7 @@ jobs:
         distribution: temurin
         java-version: 21
     - run: chmod +x ./mill
-    - run: ./mill --no-server mill.javalib.SonatypeCentralPublishModule/
+    - run: ./mill --no-server 'plugin[__].publish'
       env:
         MILL_PGP_PASSPHRASE: ${{ secrets.MILL_PGP_PASSPHRASE }}
         MILL_PGP_SECRET_BASE64: ${{ secrets.MILL_PGP_SECRET_BASE64 }}

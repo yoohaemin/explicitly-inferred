@@ -1,5 +1,0 @@
-extends: [build.ScalaTests, TestModule.Utest]
-mvnDeps:
-- com.lihaoyi::utest:0.9.1
-- com.lihaoyi::os-lib:0.11.5
-- org.scala-lang::scala3-compiler:3.8.2
