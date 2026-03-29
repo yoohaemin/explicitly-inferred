@@ -111,6 +111,8 @@ Rules:
 - A trailing rewrite with no next `methodRegex` stage is invalid.
 - Rewrites use Java replacement syntax, so both numbered (`$1`) and named (`${name}`) groups work.
 - Rewrites may also be literal text.
+- Invalid numbered references such as `$2` fail during option parsing.
+- Invalid named references such as `${missing}` fail when a matching rewrite stage applies them.
 
 Simple prefix stripping:
 
@@ -207,7 +209,8 @@ If nothing changes, check these first:
 - The def name matches the full `methodRegex` pipeline.
 - The current `scope` includes that def.
 - A `methodRegexRewrite` is attached only to a capturing regex and is followed by another `methodRegex`.
-- Replacement references such as `$2` or `${missing}` are valid for the preceding regex.
+- Numbered replacement references such as `$2` are valid for the preceding regex.
+- Named replacement references such as `${missing}` are valid for any rewrite stage that actually matches.
 
 ## Development
 
@@ -222,6 +225,8 @@ Run the test suite across every supported Scala compiler version:
 ```bash
 ./mill 'plugin[__].test.testCached'
 ```
+
+CI covers JDK `17` and `21` across all supported Scala compiler versions, JDK `25` on Scala `3.7.1+`, and JDK `26` on Scala `3.8.x`.
 
 Publish to the local Ivy repository:
 

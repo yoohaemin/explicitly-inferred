@@ -90,6 +90,62 @@ object InferredReturnCommentPluginTests extends TestSuite {
       assert(rewrite(input) == expected)
     }
 
+    test("inserts above multiline annotation blocks") {
+      val input =
+        s"""object Sample {
+           |  @deprecated(
+           |    "x",
+           |    "y"
+           |  )
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  @deprecated(
+           |    "x",
+           |    "y"
+           |  )
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input) == expected)
+    }
+
+    test("inserts above comments attached to multiline annotation blocks") {
+      val input =
+        s"""object Sample {
+           |  /* keep me */
+           |  @deprecated(
+           |    "x",
+           |    "y"
+           |  )
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      val expected =
+        s"""object Sample {
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
+           |  /* keep me */
+           |  @deprecated(
+           |    "x",
+           |    "y"
+           |  )
+           |  def value = 1
+           |}
+           |""".stripMargin
+
+      assert(rewrite(input) == expected)
+    }
+
     test("inserts above annotated defs even when trivia before def contains def") {
       val input =
         s"""object Sample {
@@ -752,14 +808,35 @@ object InferredReturnCommentPluginTests extends TestSuite {
       )
     }
 
-    test("rejects invalid named method regex rewrite references inside quoted literals") {
-      rewriteExpectFailure(
-        """object Sample {
-          |  def skip = 1
-          |}
-          |""".stripMargin,
-        methodRegex = "(.*\\Q(?<foo>)\\E)",
-        extraOptions = Seq("methodRegexRewrite=${foo}", "methodRegex=keep")
+    test("allows unmatched invalid named method regex rewrite references") {
+      val input =
+        s"""object Sample {
+           |  def skip = 1
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "prefix\\.(?<name>keep)",
+          extraOptions = Seq("methodRegexRewrite=${missing}", "methodRegex=keep")
+        ) == input
+      )
+    }
+
+    test("allows unmatched invalid named method regex rewrite references inside quoted literals") {
+      val input =
+        s"""object Sample {
+           |  def skip = 1
+           |}
+           |""".stripMargin
+
+      assert(
+        rewrite(
+          input,
+          methodRegex = "(.*\\Q(?<foo>)\\E)",
+          extraOptions = Seq("methodRegexRewrite=${foo}", "methodRegex=keep")
+        ) == input
       )
     }
 

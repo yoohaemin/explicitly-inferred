@@ -14,11 +14,9 @@ import dotty.tools.dotc.typer.TyperPhase
 import dotty.tools.dotc.util.SourceFile
 import dotty.tools.dotc.util.Spans.Span
 
-import java.lang.reflect.InaccessibleObjectException
 import java.util.regex.Pattern
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
-import scala.jdk.CollectionConverters.*
 import scala.util.Try
 
 final class InferredReturnCommentPlugin extends StandardPlugin {
@@ -61,7 +59,7 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
 
     def compileMethodRegex(value: String): MethodRegexStep = {
       val pattern = Try(Pattern.compile(value)).getOrElse(invalidMethodRegex(value))
-      MethodRegexStep(pattern, pattern.matcher("").groupCount(), namedGroups(pattern), None)
+      MethodRegexStep(pattern, pattern.matcher("").groupCount(), None)
     }
 
     options.foreach {
@@ -128,7 +126,6 @@ object InferredReturnCommentPlugin {
   private final case class MethodRegexStep(
       pattern: Pattern,
       groupCount: Int,
-      namedGroups: List[(Int, String)],
       rewrite: Option[String]
   )
   private final case class RenderSettings(
@@ -171,52 +168,44 @@ object InferredReturnCommentPlugin {
       case _ => None
   }
 
-  private val patternNamedGroupsMethod =
-    try
-      val method = classOf[Pattern].getDeclaredMethod("namedGroups")
-      method.setAccessible(true)
-      method
-    catch
-      case cause: NoSuchMethodException =>
-        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
-      case cause: InaccessibleObjectException =>
-        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
-      case cause: SecurityException =>
-        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
-
-  private def namedGroups(pattern: Pattern): List[(Int, String)] =
-    try
-      patternNamedGroupsMethod.invoke(pattern) match
-        case named: java.util.Map[?, ?] =>
-          named.asInstanceOf[java.util.Map[String, java.lang.Integer]].entrySet().asScala.toSeq
-            .map { entry =>
-              entry.getValue.intValue() -> entry.getKey
-            }
-            .sortBy(_._1)
-            .toList
-        case _ =>
-          throw new IllegalStateException("Unexpected Pattern.namedGroups result")
-    catch
-      case cause: IllegalAccessException =>
-        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
-      case cause: java.lang.reflect.InvocationTargetException =>
-        throw new IllegalStateException("Unable to inspect regex named groups for inferredReturnComment", cause)
-
   private def validateMethodRegexRewrite(rewrite: String, step: MethodRegexStep): Unit =
-    applyMethodRegexRewrite(validationMatcher(step), rewrite)
+    applyMethodRegexRewrite(validationMatcher(step.groupCount), sanitizeNamedGroupReferences(rewrite))
 
-  private def validationMatcher(step: MethodRegexStep): java.util.regex.Matcher = {
+  private def validationMatcher(groupCount: Int): java.util.regex.Matcher = {
     val builder = new StringBuilder
-    val namedGroupByIndex = step.namedGroups.toMap
-    (1 to step.groupCount).foreach { index =>
-      namedGroupByIndex.get(index) match
-        case Some(name) => builder.append(s"(?<$name>)")
-        case None => builder.append("()")
+    (1 to groupCount).foreach { _ =>
+      builder.append("()")
     }
     val matcher = Pattern.compile(builder.result()).matcher("")
     if !matcher.matches() then
       throw new IllegalStateException("Internal validation regex did not match")
     matcher
+  }
+
+  private def sanitizeNamedGroupReferences(rewrite: String): String = {
+    val builder = new StringBuilder
+    var index = 0
+
+    while index < rewrite.length do
+      rewrite.charAt(index) match
+        case '\\' =>
+          if index + 1 >= rewrite.length then
+            throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite")
+          builder.append('\\')
+          builder.append(rewrite.charAt(index + 1))
+          index += 2
+        case '$' if index + 1 < rewrite.length && rewrite.charAt(index + 1) == '{' =>
+          val nameStart = index + 2
+          val nameEnd = rewrite.indexOf('}', nameStart)
+          if nameEnd <= nameStart then
+            throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite")
+          builder.append("namedGroup")
+          index = nameEnd + 1
+        case ch =>
+          builder.append(ch)
+          index += 1
+
+    builder.toString
   }
 
   private def applyMethodRegexRewrite(matcher: java.util.regex.Matcher, rewrite: String): String =
@@ -614,27 +603,102 @@ object InferredReturnCommentPlugin {
       index
 
     private def declarationAnchorLineStart(text: String, defLineStart: Int): Int = {
-      var currentLineStart = defLineStart
+      val precedingLines = contiguousNonBlankLinesBefore(text, defLineStart)
       var anchorLineStart = defLineStart
+      var delimiterBalance = DelimiterBalance.Zero
       var sawAnnotation = false
+      var stop = false
+      var index = precedingLines.length - 1
+
+      while index >= 0 && !stop do
+        val (lineStart, line) = precedingLines(index)
+        val trimmed = line.trim
+        if isCommentLine(trimmed) then
+          if sawAnnotation then anchorLineStart = lineStart
+        else
+          delimiterBalance = delimiterBalance + backwardDelimiterDelta(trimmed)
+          if isAnnotationLine(trimmed) && delimiterBalance.isZero then
+            sawAnnotation = true
+            anchorLineStart = lineStart
+          else if sawAnnotation && delimiterBalance.nonZero then
+            anchorLineStart = lineStart
+          else if sawAnnotation then
+            stop = true
+          else if delimiterBalance.isZero then
+            stop = true
+        index -= 1
+
+      anchorLineStart
+    }
+
+    private def contiguousNonBlankLinesBefore(text: String, defLineStart: Int): IndexedSeq[(Int, String)] = {
+      val lines = ArrayBuffer.empty[(Int, String)]
+      var currentLineStart = defLineStart
       var continue = true
 
       while continue do
         previousLineStart(text, currentLineStart) match
           case Some(previousStart) =>
-            val previousText = lineText(text, previousStart).trim
-            if previousText.isEmpty then
+            val previousText = lineText(text, previousStart)
+            if previousText.trim.isEmpty then
               continue = false
-            else if isAnnotationLine(previousText) || isCommentLine(previousText) then
-              currentLineStart = previousStart
-              if isAnnotationLine(previousText) then sawAnnotation = true
-              if sawAnnotation then anchorLineStart = previousStart
             else
-              continue = false
+              lines.prepend((previousStart, previousText))
+              currentLineStart = previousStart
           case None =>
             continue = false
 
-      anchorLineStart
+      lines.toIndexedSeq
+    }
+
+    private final case class DelimiterBalance(parens: Int, brackets: Int, braces: Int) {
+      def +(other: DelimiterBalance): DelimiterBalance =
+        DelimiterBalance(parens + other.parens, brackets + other.brackets, braces + other.braces)
+
+      def isZero: Boolean =
+        parens == 0 && brackets == 0 && braces == 0
+
+      def nonZero: Boolean =
+        !isZero
+    }
+
+    private object DelimiterBalance {
+      val Zero: DelimiterBalance = DelimiterBalance(0, 0, 0)
+    }
+
+    private def backwardDelimiterDelta(line: String): DelimiterBalance = {
+      var parens = 0
+      var brackets = 0
+      var braces = 0
+      var inSingleQuoted = false
+      var inDoubleQuoted = false
+      var escaped = false
+
+      line.foreach {
+        case _ if escaped =>
+          escaped = false
+        case '\\' if inSingleQuoted || inDoubleQuoted =>
+          escaped = true
+        case '\'' if !inDoubleQuoted =>
+          inSingleQuoted = !inSingleQuoted
+        case '"' if !inSingleQuoted =>
+          inDoubleQuoted = !inDoubleQuoted
+        case ')' if !inSingleQuoted && !inDoubleQuoted =>
+          parens += 1
+        case '(' if !inSingleQuoted && !inDoubleQuoted =>
+          parens -= 1
+        case ']' if !inSingleQuoted && !inDoubleQuoted =>
+          brackets += 1
+        case '[' if !inSingleQuoted && !inDoubleQuoted =>
+          brackets -= 1
+        case '}' if !inSingleQuoted && !inDoubleQuoted =>
+          braces += 1
+        case '{' if !inSingleQuoted && !inDoubleQuoted =>
+          braces -= 1
+        case _ =>
+      }
+
+      DelimiterBalance(parens, brackets, braces)
     }
 
     private def indentationEnd(text: String, lineStart: Int): Int =
