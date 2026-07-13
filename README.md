@@ -133,13 +133,12 @@ After:
 ```scala
 /** <!-- explicitly-inferred:start -->
   * Errors:
-  *
-  *   - `Bar`
-  *   - `Foo`
+  *   - Bar
+  *   - Foo
   *
   * Returns:
   *
-  *   - `Unit`
+  *   - Unit
   * <!-- explicitly-inferred:end -->
   */
 def create = null.asInstanceOf[Effect[Any, Foo | Bar, Unit]]

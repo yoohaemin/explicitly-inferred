@@ -698,10 +698,10 @@ object InferredReturnCommentPlugin {
             case Nil => List("Nothing")
             case values => values
 
-        Seq(EffectManagedStart, "Errors:", "") ++
-          errors.map(value => s"  - `$value`") ++
+        Seq(EffectManagedStart, "Errors:") ++
+          errors.map(value => s"  - $value") ++
           Seq("", "Returns:", "") ++
-          results.map(value => s"  - `$value`") ++
+          results.map(value => s"  - $value") ++
           Seq(EffectManagedEnd)
       }
 

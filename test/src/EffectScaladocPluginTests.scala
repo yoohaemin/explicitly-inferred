@@ -34,13 +34,12 @@ object EffectScaladocPluginTests extends TestSuite {
            |  /**
            |   * <!-- explicitly-inferred:start -->
            |   * Errors:
-           |   *
-           |   *   - `Errors.Alpha`
-           |   *   - `Errors.Zebra`
+           |   *   - Errors.Alpha
+           |   *   - Errors.Zebra
            |   *
            |   * Returns:
            |   *
-           |   *   - `Option[String]`
+           |   *   - Option[String]
            |   * <!-- explicitly-inferred:end -->
            |   */
            |  def value = null.asInstanceOf[Effect[Any, Errors.Zebra | Errors.Alpha, Option[String]]]
@@ -69,8 +68,8 @@ object EffectScaladocPluginTests extends TestSuite {
       )
       val output = rewrite(input, extraOptions = options)
 
-      assert(output.contains("*   - `UnexpectedError`"))
-      assert(!output.contains("*   - `Sample.ShortCircuit[Int]`"))
+      assert(output.contains("*   - UnexpectedError"))
+      assert(!output.contains("*   - Sample.ShortCircuit[Int]"))
       assert(output.split("Errors:", -1).length == 3)
     }
 
@@ -91,8 +90,8 @@ object EffectScaladocPluginTests extends TestSuite {
       assert(output.contains("Existing documentation."))
       assert(output.contains("@param input existing tag"))
       assert(output.indexOf("explicitly-inferred:end") < output.indexOf("@param input"))
-      assert(output.contains("*   - `Nothing`"))
-      assert(output.contains("*   - `Int`"))
+      assert(output.contains("*   - Nothing"))
+      assert(output.contains("*   - Int"))
     }
 
     test("renders owner-qualified aliases, tuples, and named tuples in source syntax") {
@@ -115,9 +114,9 @@ object EffectScaladocPluginTests extends TestSuite {
 
       val output = rewrite(input, extraOptions = effectOptions)
 
-      assert(output.contains("*   - `Order.Id`"))
-      assert(output.contains("*   - `(Order.Id, Option[String])`"))
-      assert(output.contains("*   - `(pending: Option[String])`"))
+      assert(output.contains("*   - Order.Id"))
+      assert(output.contains("*   - (Order.Id, Option[String])"))
+      assert(output.contains("*   - (pending: Option[String])"))
     }
 
     test("ignores inferred methods whose effect constructor does not match") {
@@ -152,9 +151,9 @@ object EffectScaladocPluginTests extends TestSuite {
       val output = rewrite(input, extraOptions = effectOptions)
 
       assert(output.split("explicitly-inferred:start", -1).length == 2)
-      assert(output.contains("*   - `Nothing`"))
-      assert(output.contains("*   - `Int`"))
-      assert(!output.contains("*   - `String`"))
+      assert(output.contains("*   - Nothing"))
+      assert(output.contains("*   - Int"))
+      assert(!output.contains("*   - String"))
     }
   }
 }
