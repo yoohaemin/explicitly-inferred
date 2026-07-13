@@ -133,7 +133,7 @@ object CompilerPluginTestSupport {
       sys.props("java.class.path"),
       "dotty.tools.dotc.Main"
     ) ++
-      defaultSyntaxOptions ++
+      (if includeRewrite then Seq.empty else defaultSyntaxOptions) ++
       (if includeRewrite then Seq("-rewrite") else Seq.empty) ++
       Seq(
         "-classpath",

@@ -10,10 +10,10 @@
 com.yoohaemin:explicitly-inferred_<scala-version>:<plugin-version>
 ```
 
-For example, Scala `3.8.2` resolves:
+For example, Scala `3.8.4` resolves:
 
 ```text
-com.yoohaemin:explicitly-inferred_3.8.2:<plugin-version>
+com.yoohaemin:explicitly-inferred_3.8.4:<plugin-version>
 ```
 
 Supported Scala compiler versions are:
@@ -22,7 +22,7 @@ Supported Scala compiler versions are:
 3.5.0, 3.5.1, 3.5.2,
 3.6.0, 3.6.1, 3.6.2, 3.6.3, 3.6.4,
 3.7.0, 3.7.1, 3.7.2, 3.7.3, 3.7.4,
-3.8.0, 3.8.1, 3.8.2
+3.8.0, 3.8.1, 3.8.2, 3.8.3, 3.8.4
 ```
 
 Use full-version cross publishing when you add it to your build.
@@ -43,16 +43,19 @@ addCompilerPlugin(
 )
 ```
 
-The plugin rewrites source files in place, so you must compile with `-rewrite`. This project itself is built with `-no-indent` and `-old-syntax`. If you wire the plugin through a build tool as a compiler plugin dependency, the build tool provides the `-Xplugin` path and you only need to add the syntax flags you want, the plugin options, and `-rewrite`.
+The plugin rewrites source files in place, so you must compile with `-rewrite`. If you wire the
+plugin through a build tool as a compiler plugin dependency, the build tool provides the `-Xplugin`
+path and you only need to add the syntax flags appropriate for your sources, the plugin options,
+and `-rewrite`.
 
 The raw compiler flags look like this:
 
 ```text
--no-indent
--old-syntax
 -Xplugin:/path/to/explicitly-inferred.jar
 -rewrite
 ```
+
+Add syntax options such as `-no-indent` or `-old-syntax` when the rewritten sources require them.
 
 When a `def` has no explicit return type and matches the configured filters, the plugin inserts or updates a managed block comment immediately above it.
 
@@ -97,6 +100,50 @@ That is usually enough to rewrite inferred member defs with the default managed 
 | `managedTag=<single-line-text>` | `@inferredReturnType` | Changes the marker used for managed entries. |
 | `showTypeArgs=true\|false` | `true` | Shows or suppresses type arguments in rendered types. |
 | `showTypeParamNames=true\|false` | `true` | Shows type parameter labels such as `A = Int` instead of positional type arguments. |
+| `mode=returnComment\|effectScaladoc` | `returnComment` | Selects the legacy return comment or managed effect Scaladoc. |
+| `effectTypeRegex=<java-regex>` | `.*` | In effect mode, matches the full effect constructor name. |
+| `errorTypeParam=<name>` | `E` | Names the effect type parameter containing errors. |
+| `resultTypeParam=<name>` | `A` | Names the effect type parameter containing the result. |
+| `additionalErrorType=<display-name>` | none | Adds a public error entry. Repeatable. |
+| `excludeErrorTypeRegex=<java-regex>` | none | Removes matching internal errors. Repeatable. |
+| `typeNameStyle=simple\|owner\|full` | `simple` | Controls qualification of rendered type names. |
+
+### Effect Scaladoc
+
+Effect mode documents the inferred error and result parameters of a matching effect type. Union
+members are dealiased, deduplicated, sorted, and emitted one per line inside a managed Scaladoc
+region. Existing prose and tags outside the region are preserved.
+
+```text
+-P:inferredReturnComment:mode=effectScaladoc
+-P:inferredReturnComment:effectTypeRegex=zio\.prelude\.fx\.ZPure
+-P:inferredReturnComment:errorTypeParam=E
+-P:inferredReturnComment:resultTypeParam=A
+-P:inferredReturnComment:typeNameStyle=owner
+```
+
+Before:
+
+```scala
+def create = null.asInstanceOf[Effect[Any, Foo | Bar, Unit]]
+```
+
+After:
+
+```scala
+/** <!-- explicitly-inferred:start -->
+  * Errors:
+  *
+  *   - `Bar`
+  *   - `Foo`
+  *
+  * Returns:
+  *
+  *   - `Unit`
+  * <!-- explicitly-inferred:end -->
+  */
+def create = null.asInstanceOf[Effect[Any, Foo | Bar, Unit]]
+```
 
 ### Regex Pipeline
 
@@ -217,7 +264,7 @@ If nothing changes, check these first:
 Run the test suite:
 
 ```bash
-./mill 'plugin[3.8.2].test.testCached'
+./mill 'plugin[3.8.4].test.testCached'
 ```
 
 Run the test suite across every supported Scala compiler version:

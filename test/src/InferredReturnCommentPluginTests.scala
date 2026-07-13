@@ -365,6 +365,9 @@ object InferredReturnCommentPluginTests extends TestSuite {
            |   * @inferredReturnType Int
            |   */
            |  def keep = 1
+           |  /*
+           |   * @inferredReturnType Int
+           |   */
            |  def skip = 2
            |}
            |""".stripMargin

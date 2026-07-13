@@ -32,6 +32,13 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
       |-P:inferredReturnComment:managedTag=<single-line-text>
       |-P:inferredReturnComment:showTypeArgs=true|false
       |-P:inferredReturnComment:showTypeParamNames=true|false
+      |-P:inferredReturnComment:mode=returnComment|effectScaladoc
+      |-P:inferredReturnComment:effectTypeRegex=<java-regex>
+      |-P:inferredReturnComment:errorTypeParam=<type-parameter-name>
+      |-P:inferredReturnComment:resultTypeParam=<type-parameter-name>
+      |-P:inferredReturnComment:additionalErrorType=<display-name>
+      |-P:inferredReturnComment:excludeErrorTypeRegex=<java-regex>
+      |-P:inferredReturnComment:typeNameStyle=simple|owner|full
       |
       |Repeat methodRegex to build a left-to-right match pipeline.
       |methodRegexRewrite must immediately follow a capturing methodRegex and
@@ -50,6 +57,13 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
     var managedTag = DefaultManagedTag
     var showTypeArgs = true
     var showTypeParamNames = true
+    var mode = Mode.ReturnComment
+    var effectTypeRegex = Pattern.compile(".*")
+    var errorTypeParam = "E"
+    var resultTypeParam = "A"
+    val additionalErrorTypes = ArrayBuffer.empty[String]
+    val excludeErrorTypeRegexes = ArrayBuffer.empty[Pattern]
+    var typeNameStyle = TypeNameStyle.Simple
 
     def invalidMethodRegex(value: String): Nothing =
       throw new IllegalArgumentException(s"Invalid $PluginName methodRegex: $value")
@@ -71,9 +85,9 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
         methodSteps.lastOption match
           case None =>
             invalidMethodRegexRewrite(value)
-          case Some(MethodRegexStep(_, _, _, Some(_))) =>
+          case Some(MethodRegexStep(_, _, Some(_))) =>
             invalidMethodRegexRewrite(value)
-          case Some(MethodRegexStep(_, 0, _, None)) =>
+          case Some(MethodRegexStep(_, 0, None)) =>
             invalidMethodRegexRewrite(value)
           case Some(step) =>
             validateMethodRegexRewrite(value, step)
@@ -103,6 +117,32 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
           case Some(value) => showTypeParamNames = value
           case None =>
             throw new IllegalArgumentException(s"Invalid $PluginName showTypeParamNames: ${option.stripPrefix("showTypeParamNames=")}")
+      case option if option.startsWith("mode=") =>
+        Mode.fromOption(option.stripPrefix("mode=")) match
+          case Some(value) => mode = value
+          case None =>
+            throw new IllegalArgumentException(s"Unknown $PluginName mode: ${option.stripPrefix("mode=")}")
+      case option if option.startsWith("effectTypeRegex=") =>
+        val value = option.stripPrefix("effectTypeRegex=")
+        effectTypeRegex = Try(Pattern.compile(value)).getOrElse {
+          throw new IllegalArgumentException(s"Invalid $PluginName effectTypeRegex: $value")
+        }
+      case option if option.startsWith("errorTypeParam=") =>
+        errorTypeParam = TypeParamOption.parse("errorTypeParam", option.stripPrefix("errorTypeParam="))
+      case option if option.startsWith("resultTypeParam=") =>
+        resultTypeParam = TypeParamOption.parse("resultTypeParam", option.stripPrefix("resultTypeParam="))
+      case option if option.startsWith("additionalErrorType=") =>
+        additionalErrorTypes += DisplayTypeOption.parse("additionalErrorType", option.stripPrefix("additionalErrorType="))
+      case option if option.startsWith("excludeErrorTypeRegex=") =>
+        val value = option.stripPrefix("excludeErrorTypeRegex=")
+        excludeErrorTypeRegexes += Try(Pattern.compile(value)).getOrElse {
+          throw new IllegalArgumentException(s"Invalid $PluginName excludeErrorTypeRegex: $value")
+        }
+      case option if option.startsWith("typeNameStyle=") =>
+        TypeNameStyle.fromOption(option.stripPrefix("typeNameStyle=")) match
+          case Some(value) => typeNameStyle = value
+          case None =>
+            throw new IllegalArgumentException(s"Unknown $PluginName typeNameStyle: ${option.stripPrefix("typeNameStyle=")}")
       case option =>
         throw new IllegalArgumentException(s"Unknown $PluginName option: $option")
     }
@@ -114,15 +154,37 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
       if methodSteps.nonEmpty then methodSteps.toList
       else List(compileMethodRegex(".*"))
 
-    Some(Config(compiledMethodSteps, scope, RenderSettings(maxTypeLength, managedTag, showTypeArgs, showTypeParamNames)))
+    val effectSettings = EffectSettings(
+      effectTypeRegex,
+      errorTypeParam,
+      resultTypeParam,
+      additionalErrorTypes.toList,
+      excludeErrorTypeRegexes.toList,
+      typeNameStyle
+    )
+    Some(Config(
+      compiledMethodSteps,
+      scope,
+      mode,
+      RenderSettings(maxTypeLength, managedTag, showTypeArgs, showTypeParamNames, typeNameStyle, true),
+      effectSettings
+    ))
 }
 
 object InferredReturnCommentPlugin {
   private val PluginName = "inferredReturnComment"
   private val DefaultManagedTag = "@inferredReturnType"
   private val ManagedContinuationPrefix = "  "
+  private val EffectManagedStart = "<!-- explicitly-inferred:start -->"
+  private val EffectManagedEnd = "<!-- explicitly-inferred:end -->"
 
-  private final case class Config(methodSteps: List[MethodRegexStep], scope: Scope, renderSettings: RenderSettings)
+  private final case class Config(
+      methodSteps: List[MethodRegexStep],
+      scope: Scope,
+      mode: Mode,
+      renderSettings: RenderSettings,
+      effectSettings: EffectSettings
+  )
   private final case class MethodRegexStep(
       pattern: Pattern,
       groupCount: Int,
@@ -132,9 +194,43 @@ object InferredReturnCommentPlugin {
       maxTypeLength: Int,
       managedTag: String,
       showTypeArgs: Boolean,
-      showTypeParamNames: Boolean
+      showTypeParamNames: Boolean,
+      typeNameStyle: TypeNameStyle,
+      dealiasTypes: Boolean
   ) {
     def managedPrefix: String = s"$managedTag "
+  }
+
+  private final case class EffectSettings(
+      effectTypeRegex: Pattern,
+      errorTypeParam: String,
+      resultTypeParam: String,
+      additionalErrorTypes: List[String],
+      excludeErrorTypeRegexes: List[Pattern],
+      typeNameStyle: TypeNameStyle
+  )
+
+  private enum Mode {
+    case ReturnComment, EffectScaladoc
+  }
+
+  private object Mode {
+    def fromOption(value: String): Option[Mode] = value match
+      case "returnComment" => Some(Mode.ReturnComment)
+      case "effectScaladoc" => Some(Mode.EffectScaladoc)
+      case _ => None
+  }
+
+  private enum TypeNameStyle {
+    case Simple, Owner, Full
+  }
+
+  private object TypeNameStyle {
+    def fromOption(value: String): Option[TypeNameStyle] = value match
+      case "simple" => Some(TypeNameStyle.Simple)
+      case "owner" => Some(TypeNameStyle.Owner)
+      case "full" => Some(TypeNameStyle.Full)
+      case _ => None
   }
 
   private enum Scope {
@@ -166,6 +262,22 @@ object InferredReturnCommentPlugin {
       case "true" => Some(true)
       case "false" => Some(false)
       case _ => None
+  }
+
+  private object TypeParamOption {
+    def parse(optionName: String, value: String): String = {
+      val trimmed = value.trim
+      if trimmed.matches("[A-Za-z_$][A-Za-z0-9_$]*") then trimmed
+      else throw new IllegalArgumentException(s"Invalid $PluginName $optionName: $value")
+    }
+  }
+
+  private object DisplayTypeOption {
+    def parse(optionName: String, value: String): String = {
+      val trimmed = value.trim
+      if trimmed.nonEmpty && !trimmed.contains('\n') && !trimmed.contains('\r') then trimmed
+      else throw new IllegalArgumentException(s"Invalid $PluginName $optionName: $value")
+    }
   }
 
   private def validateMethodRegexRewrite(rewrite: String, step: MethodRegexStep): Unit =
@@ -223,6 +335,8 @@ object InferredReturnCommentPlugin {
         throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $rewrite", cause)
 
   private object NormalizedTypeRenderer {
+    final case class RenderedType(display: String, sortKey: String, fullName: String)
+
     private sealed trait TypeNode {
       def sortKey: String
       def precedence: Int
@@ -244,6 +358,14 @@ object InferredReturnCommentPlugin {
       override val precedence: Int = 2
     }
 
+    private final case class TupleValue(parts: List[TypeNode], sortKey: String) extends TypeNode {
+      override val precedence: Int = 4
+    }
+
+    private final case class NamedTupleValue(fields: List[(String, TypeNode)], sortKey: String) extends TypeNode {
+      override val precedence: Int = 4
+    }
+
     private final case class RenderedArg(label: Option[String], value: TypeNode, sortKey: String)
 
     def managedLines(tpe: Type, settings: RenderSettings)(using Context): Seq[String] = {
@@ -255,19 +377,41 @@ object InferredReturnCommentPlugin {
         settings.managedTag +: renderBlock(node).map(line => ManagedContinuationPrefix + line)
     }
 
-    private def toNode(tpe: Type, settings: RenderSettings)(using Context): TypeNode = {
+    def unionEntries(tpe: Type, settings: RenderSettings)(using Context): List[RenderedType] =
+      flattenOr(tpe, settings.dealiasTypes)
+        .map(part => (toNode(part, settings), fullTypeName(part)))
+        .sortBy(_._1.sortKey)
+        .foldLeft(List.empty[(TypeNode, String)]) { (acc, entry) =>
+          if acc.lastOption.exists(_._1.sortKey == entry._1.sortKey) then acc else acc :+ entry
+        }
+        .map { (node, fullName) => RenderedType(renderSingle(node), node.sortKey, fullName) }
+
+    def fullTypeName(tpe: Type)(using Context): String = {
       val normalized = normalizeType(tpe)
-      normalized match
+      val symbol = normalized.typeSymbol
+      if symbol.exists then symbol.fullName.show else normalized.show
+    }
+
+    private def toNode(tpe: Type, settings: RenderSettings)(using Context): TypeNode = {
+      val normalized = normalizeType(tpe, settings.dealiasTypes)
+      if !settings.dealiasTypes && isCompilerInternalAlias(normalized) then
+        toNode(normalizeType(tpe, true), settings)
+      else normalized match
         case tp: OrType =>
-          val parts = flattenOr(tp).map(part => toNode(part, settings)).sortBy(_.sortKey)
+          val parts = flattenOr(tp, settings.dealiasTypes).map(part => toNode(part, settings)).sortBy(_.sortKey)
           val deduped = dedupe(parts)
           if deduped.size == 1 then deduped.head
           else Union(deduped, deduped.map(_.sortKey).mkString("or(", ",", ")"))
         case tp: AndType =>
-          val parts = flattenAnd(tp).map(part => toNode(part, settings)).sortBy(_.sortKey)
+          val parts = flattenAnd(tp, settings.dealiasTypes).map(part => toNode(part, settings)).sortBy(_.sortKey)
           val deduped = dedupe(parts)
           if deduped.size == 1 then deduped.head
           else Intersection(deduped, deduped.map(_.sortKey).mkString("and(", ",", ")"))
+        case AppliedType(tycon, args) if isNamedTuple(tycon, args) =>
+          namedTupleNode(args, settings).getOrElse(leafFor(normalized, settings))
+        case AppliedType(tycon, args) if isOrdinaryTuple(tycon, args) =>
+          val parts = args.map(arg => toNode(arg, settings))
+          TupleValue(parts, parts.map(_.sortKey).mkString("tuple(", ",", ")"))
         case AppliedType(tycon, args) =>
           val tyconNode = toNode(tycon, settings)
           if !settings.showTypeArgs || args.isEmpty then tyconNode
@@ -280,26 +424,69 @@ object InferredReturnCommentPlugin {
             }
             Applied(tyconNode, renderedArgs, s"${tyconNode.sortKey}[${renderedArgs.map(_.sortKey).mkString(",")}]")
         case _ =>
-          leafFor(normalized)
+          leafFor(normalized, settings)
     }
 
-    private def leafFor(tpe: Type)(using Context): TypeNode = {
-      val display = displayName(tpe)
-      Leaf(display, stableLeafKey(tpe, display))
+    private def leafFor(tpe: Type, settings: RenderSettings)(using Context): TypeNode = {
+      val display = displayName(tpe, settings.typeNameStyle, settings.dealiasTypes)
+      Leaf(display, stableLeafKey(tpe, display, settings.dealiasTypes))
     }
 
-    private def normalizeType(tpe: Type)(using Context): Type =
-      tpe.widenDealias.simplified.normalized.dealias
+    private def normalizeType(tpe: Type, dealiasTypes: Boolean = true)(using Context): Type =
+      if dealiasTypes then tpe.widenDealias.simplified.normalized.dealias
+      else tpe.widen.simplified.normalized
 
-    private def flattenOr(tpe: Type)(using Context): List[Type] =
-      normalizeType(tpe) match
-        case OrType(left, right) => flattenOr(left) ::: flattenOr(right)
+    private def flattenOr(tpe: Type, dealiasTypes: Boolean = true)(using Context): List[Type] =
+      normalizeType(tpe, dealiasTypes) match
+        case OrType(left, right) => flattenOr(left, dealiasTypes) ::: flattenOr(right, dealiasTypes)
         case other => other :: Nil
 
-    private def flattenAnd(tpe: Type)(using Context): List[Type] =
-      normalizeType(tpe) match
-        case AndType(left, right) => flattenAnd(left) ::: flattenAnd(right)
+    private def flattenAnd(tpe: Type, dealiasTypes: Boolean = true)(using Context): List[Type] =
+      normalizeType(tpe, dealiasTypes) match
+        case AndType(left, right) => flattenAnd(left, dealiasTypes) ::: flattenAnd(right, dealiasTypes)
         case other => other :: Nil
+
+    private def isNamedTuple(tycon: Type, args: List[Type])(using Context): Boolean =
+      args.size == 2 &&
+        tycon.typeSymbol.name.show == "NamedTuple" &&
+        tycon.typeSymbol.owner.name.show == "NamedTuple"
+
+    private def isOrdinaryTuple(tycon: Type, args: List[Type])(using Context): Boolean = {
+      val name = fullTypeName(tycon)
+      args.size >= 2 && name.matches("scala\\.Tuple[0-9]+")
+    }
+
+    private def namedTupleNode(args: List[Type], settings: RenderSettings)(using Context): Option[TypeNode] =
+      for
+        names <- tupleElements(args.head, settings.dealiasTypes)
+        values <- tupleElements(args(1), settings.dealiasTypes)
+        if names.size == values.size && names.nonEmpty
+      yield {
+        val fields = names.zip(values).map { (nameType, valueType) =>
+          val rawName = nameType.dealias.show
+          val firstQuote = rawName.indexOf('"')
+          val secondQuote = if firstQuote >= 0 then rawName.indexOf('"', firstQuote + 1) else -1
+          val name =
+            if firstQuote >= 0 && secondQuote > firstQuote then rawName.substring(firstQuote + 1, secondQuote)
+            else rawName
+          name -> toNode(valueType, settings)
+        }
+        NamedTupleValue(
+          fields,
+          fields.map { (name, value) => s"$name:${value.sortKey}" }.mkString("namedTuple(", ",", ")")
+        )
+      }
+
+    private def isCompilerInternalAlias(tpe: Type)(using Context): Boolean = {
+      val symbol = tpe.typeSymbol
+      symbol.exists && symbol.owner.name.show == "Signature"
+    }
+
+    private def tupleElements(tpe: Type, dealiasTypes: Boolean)(using Context): Option[List[Type]] =
+      normalizeType(tpe, dealiasTypes) match
+        case AppliedType(tycon, args) if fullTypeName(tycon).matches("scala\\.Tuple[0-9]+") =>
+          Some(args)
+        case _ => None
 
     private def dedupe(nodes: List[TypeNode]): List[TypeNode] =
       nodes.foldLeft(List.empty[TypeNode]) { (acc, node) =>
@@ -312,14 +499,14 @@ object InferredReturnCommentPlugin {
         val labels = tycon.typeParams.map(_.paramName.show).take(argCount).map(Some(_))
         labels.padTo(argCount, None)
 
-    private def displayName(tpe: Type)(using Context): String =
-      normalizeType(tpe) match
+    private def displayName(tpe: Type, typeNameStyle: TypeNameStyle, dealiasTypes: Boolean)(using Context): String =
+      normalizeType(tpe, dealiasTypes) match
         case tp: TypeRef if tp.symbol.exists =>
-          tp.symbol.name.show
+          displaySymbol(tp.symbol, typeNameStyle)
         case tp: TermRef if tp.symbol.exists =>
-          tp.symbol.name.show
+          displaySymbol(tp.symbol, typeNameStyle)
         case tp: ThisType =>
-          tp.tref.symbol.name.show
+          displaySymbol(tp.tref.symbol, typeNameStyle)
         case tp: ConstantType =>
           tp.show
         case tp: TypeBounds =>
@@ -327,8 +514,21 @@ object InferredReturnCommentPlugin {
         case tp =>
           tp.show
 
-    private def stableLeafKey(tpe: Type, display: String)(using Context): String = {
-      val normalized = normalizeType(tpe)
+    private def displaySymbol(symbol: Symbol, typeNameStyle: TypeNameStyle)(using Context): String =
+      typeNameStyle match
+        case TypeNameStyle.Simple => symbol.name.show
+        case TypeNameStyle.Full => symbol.fullName.show
+        case TypeNameStyle.Owner =>
+          val owner = symbol.owner
+          if symbol.fullName.show.startsWith("scala.") then
+            symbol.name.show
+          else if owner.exists && !owner.is(Flags.Package) then
+            s"${owner.name.show}.${symbol.name.show}"
+          else
+            symbol.name.show
+
+    private def stableLeafKey(tpe: Type, display: String, dealiasTypes: Boolean)(using Context): String = {
+      val normalized = normalizeType(tpe, dealiasTypes)
       val symbol = normalized.typeSymbol
       if symbol.exists then
         val coord = symbol.coord.toString
@@ -346,6 +546,10 @@ object InferredReturnCommentPlugin {
           parts.map(renderSingle(_, node.precedence)).mkString(" | ")
         case Intersection(parts, _) =>
           parts.map(renderSingle(_, node.precedence)).mkString(" & ")
+        case TupleValue(parts, _) =>
+          parts.map(renderSingle(_)).mkString("(", ", ", ")")
+        case NamedTupleValue(fields, _) =>
+          fields.map { (name, value) => s"$name: ${renderSingle(value)}" }.mkString("(", ", ", ")")
       if node.precedence < parentPrecedence then s"($rendered)" else rendered
     }
 
@@ -366,6 +570,10 @@ object InferredReturnCommentPlugin {
           renderJoinedBlock(parts, " |", node.precedence)
         case Intersection(parts, _) =>
           renderJoinedBlock(parts, " &", node.precedence)
+        case tuple: TupleValue =>
+          renderSingle(tuple) :: Nil
+        case tuple: NamedTupleValue =>
+          renderSingle(tuple) :: Nil
       if node.precedence < parentPrecedence then wrapWithParens(core) else core
     }
 
@@ -439,18 +647,80 @@ object InferredReturnCommentPlugin {
       else
         val source = ctx.compilationUnit.source
         val text = sourceText(source)
-        val managedLines = NormalizedTypeRenderer.managedLines(tree.tpt.tpe, config.renderSettings)
         val defLineStart = lineStart(text, tree.span.start)
         val insertionLineStart = declarationAnchorLineStart(text, defLineStart)
         val indent = text.substring(insertionLineStart, indentationEnd(text, insertionLineStart))
         val newline = detectNewline(text)
-        val commentOpt = nearestAttachedComment(ctx.compilationUnit, text, insertionLineStart)
+        val commentOpt =
+          if !declarationHasAnnotations(text, defLineStart) then
+            nearestAttachedComment(ctx.compilationUnit, text, insertionLineStart)
+          else
+            None
 
-        commentOpt match
-          case Some(comment) if isBlockComment(comment) =>
-            patchSpan(comment.span, updateExistingBlockComment(comment, text, managedLines, newline))
-          case _ =>
-            patchSpan(Span(insertionLineStart), newManagedBlock(indent, managedLines, newline))
+        config.mode match
+          case Mode.ReturnComment =>
+            val managedLines = NormalizedTypeRenderer.managedLines(tree.tpt.tpe, config.renderSettings)
+            commentOpt match
+              case Some(comment) if isBlockComment(comment) =>
+                patchSpan(comment.span, updateExistingBlockComment(comment, text, managedLines, newline))
+              case _ =>
+                patchSpan(Span(insertionLineStart), newManagedBlock(indent, managedLines, newline))
+          case Mode.EffectScaladoc =>
+            effectScaladocLines(tree.tpt.tpe).foreach { managedLines =>
+              commentOpt match
+                case Some(comment) if isBlockComment(comment) =>
+                  patchSpan(comment.span, updateExistingEffectScaladoc(comment, text, managedLines, newline))
+                case _ =>
+                  patchSpan(Span(insertionLineStart), newEffectScaladoc(indent, managedLines, newline))
+            }
+
+    private def effectScaladocLines(tpe: Type)(using Context): Option[Seq[String]] =
+      effectTypeArguments(tpe).map { (errorType, resultType) =>
+        val errorRenderSettings = config.renderSettings.copy(showTypeParamNames = false)
+        val resultRenderSettings = errorRenderSettings.copy(dealiasTypes = false)
+        val excluded = config.effectSettings.excludeErrorTypeRegexes
+        val inferredErrors = NormalizedTypeRenderer
+          .unionEntries(errorType, errorRenderSettings)
+          .filterNot { rendered =>
+            excluded.exists(pattern =>
+              pattern.matcher(rendered.fullName).matches() || pattern.matcher(rendered.display).matches()
+            )
+          }
+          .map(_.display)
+        val errors = (inferredErrors ++ config.effectSettings.additionalErrorTypes).distinct.sorted match
+          case Nil => List("Nothing")
+          case values => values
+        val results = NormalizedTypeRenderer
+          .unionEntries(resultType, resultRenderSettings)
+          .map(_.display)
+          .distinct
+          .sorted match
+            case Nil => List("Nothing")
+            case values => values
+
+        Seq(EffectManagedStart, "Errors:", "") ++
+          errors.map(value => s"  - `$value`") ++
+          Seq("", "Returns:", "") ++
+          results.map(value => s"  - `$value`") ++
+          Seq(EffectManagedEnd)
+      }
+
+    private def effectTypeArguments(tpe: Type)(using Context): Option[(Type, Type)] = {
+      def extract(normalized: Type): Option[(Type, Type)] = normalized match
+        case AppliedType(tycon, args) =>
+          val effectName = NormalizedTypeRenderer.fullTypeName(tycon)
+          if !config.effectSettings.effectTypeRegex.matcher(effectName).matches() then None
+          else
+            val byName = tycon.typeParams.map(_.paramName.show).zip(args).toMap
+            for
+              errorType <- byName.get(config.effectSettings.errorTypeParam)
+              resultType <- byName.get(config.effectSettings.resultTypeParam)
+            yield (errorType, resultType)
+        case _ => None
+
+      extract(tpe.widen.simplified.normalized)
+        .orElse(extract(tpe.widenDealias.simplified.normalized.dealias))
+    }
 
     private def isSkipped(symbol: Symbol, name: String)(using Context): Boolean =
       symbol == null ||
@@ -504,6 +774,80 @@ object InferredReturnCommentPlugin {
     private def newManagedBlock(indent: String, managedLines: Seq[String], newline: String): String = {
       val body = managedLines.map(line => s"${indent} * $line").mkString(newline)
       s"${indent}/*$newline$body$newline${indent} */$newline"
+    }
+
+    private def newEffectScaladoc(indent: String, managedLines: Seq[String], newline: String): String = {
+      val body = managedLines.map {
+        case "" => s"${indent} *"
+        case line => s"${indent} * $line"
+      }.mkString(newline)
+      s"${indent}/**$newline$body$newline${indent} */$newline"
+    }
+
+    private def updateExistingEffectScaladoc(
+        comment: Comment,
+        text: String,
+        managedLines: Seq[String],
+        sourceNewline: String
+    ): String = {
+      val raw = comment.raw
+      val commentIndent = text.substring(lineStart(text, comment.span.start), comment.span.start)
+      val newline = detectNewline(raw, sourceNewline)
+      val normalizedRaw =
+        if raw.contains(newline) then raw
+        else expandSingleLineBlock(raw, commentIndent, newline)
+      val scaladocRaw =
+        if normalizedRaw.startsWith("/**") then normalizedRaw
+        else "/**" + normalizedRaw.stripPrefix("/*")
+      updateEffectScaladocLines(scaladocRaw, commentIndent, managedLines, newline)
+    }
+
+    private def updateEffectScaladocLines(
+        raw: String,
+        commentIndent: String,
+        managedLines: Seq[String],
+        newline: String
+    ): String = {
+      val lines = ArrayBuffer.from(raw.split(Pattern.quote(newline), -1).toSeq)
+      val start = lines.indexWhere(_.contains(EffectManagedStart))
+      val end = lines.indexWhere(_.contains(EffectManagedEnd))
+      val linePrefix = preferredBlockLinePrefix(lines.toSeq, commentIndent)
+      val managedRawLines = managedLines.map {
+        case "" => linePrefix.stripSuffix(" ")
+        case line => linePrefix + line
+      }
+
+      val insertAt =
+        if start >= 0 && end >= start then {
+          val markerOffset = lines(start).indexOf(EffectManagedStart)
+          val markerIsOnOpener = lines(start).take(markerOffset).trim.endsWith("/**")
+          if markerIsOnOpener then {
+            lines(start) = lines(start).take(markerOffset).stripTrailing()
+            lines.remove(start + 1, end - start)
+            start + 1
+          } else {
+            lines.remove(start, end - start + 1)
+            start
+          }
+        } else {
+          val tagIndex = lines.indexWhere(line => stripCommentLinePrefix(line).trim.startsWith("@"))
+          val closingIndex = lines.lastIndexWhere(_.contains("*/"))
+          if tagIndex >= 0 then tagIndex
+          else if closingIndex >= 0 then closingIndex
+          else lines.length
+        }
+
+      val needsLeadingBlank = insertAt > 1 && stripCommentLinePrefix(lines(insertAt - 1)).trim.nonEmpty
+      val needsTrailingBlank =
+        insertAt < lines.length &&
+          !lines(insertAt).contains("*/") &&
+          stripCommentLinePrefix(lines(insertAt)).trim.nonEmpty
+      val block = ArrayBuffer.empty[String]
+      if needsLeadingBlank then block += linePrefix.stripSuffix(" ")
+      block ++= managedRawLines
+      if needsTrailingBlank then block += linePrefix.stripSuffix(" ")
+      lines.insertAll(insertAt, block)
+      lines.mkString(newline)
     }
 
     private def updateExistingBlockComment(comment: Comment, text: String, managedLines: Seq[String], sourceNewline: String): String =
@@ -606,7 +950,7 @@ object InferredReturnCommentPlugin {
       val precedingLines = contiguousNonBlankLinesBefore(text, defLineStart)
       var anchorLineStart = defLineStart
       var delimiterBalance = DelimiterBalance.Zero
-      var sawAnnotation = false
+      var sawAnnotation = isAnnotationLine(lineText(text, defLineStart).trim)
       var stop = false
       var index = precedingLines.length - 1
 
@@ -616,20 +960,31 @@ object InferredReturnCommentPlugin {
         if isCommentLine(trimmed) then
           if sawAnnotation then anchorLineStart = lineStart
         else
-          delimiterBalance = delimiterBalance + backwardDelimiterDelta(trimmed)
-          if isAnnotationLine(trimmed) && delimiterBalance.isZero then
-            sawAnnotation = true
-            anchorLineStart = lineStart
-          else if sawAnnotation && delimiterBalance.nonZero then
-            anchorLineStart = lineStart
-          else if sawAnnotation then
+          val delimiterDelta = backwardDelimiterDelta(trimmed)
+          if sawAnnotation && delimiterBalance.isZero &&
+              !isAnnotationLine(trimmed) && !delimiterDelta.hasPositive then
             stop = true
-          else if delimiterBalance.isZero then
-            stop = true
+          else
+            delimiterBalance = delimiterBalance + delimiterDelta
+            if isAnnotationLine(trimmed) && delimiterBalance.isZero then
+              sawAnnotation = true
+              anchorLineStart = lineStart
+            else if sawAnnotation && delimiterBalance.nonZero then
+              anchorLineStart = lineStart
+            else if sawAnnotation then
+              stop = true
+            else if delimiterBalance.isZero then
+              stop = true
         index -= 1
 
       anchorLineStart
     }
+
+    private def declarationHasAnnotations(text: String, defLineStart: Int): Boolean =
+      isAnnotationLine(lineText(text, defLineStart).trim) ||
+        contiguousNonBlankLinesBefore(text, defLineStart).exists { (_, line) =>
+          isAnnotationLine(line.trim)
+        }
 
     private def contiguousNonBlankLinesBefore(text: String, defLineStart: Int): IndexedSeq[(Int, String)] = {
       val lines = ArrayBuffer.empty[(Int, String)]
@@ -660,6 +1015,9 @@ object InferredReturnCommentPlugin {
 
       def nonZero: Boolean =
         !isZero
+
+      def hasPositive: Boolean =
+        parens > 0 || brackets > 0 || braces > 0
     }
 
     private object DelimiterBalance {
