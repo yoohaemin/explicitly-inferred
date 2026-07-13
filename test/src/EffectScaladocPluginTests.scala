@@ -38,7 +38,6 @@ object EffectScaladocPluginTests extends TestSuite {
            |   *   - Errors.Zebra
            |   *
            |   * Returns:
-           |   *
            |   *   - Option[String]
            |   * <!-- explicitly-inferred:end -->
            |   */

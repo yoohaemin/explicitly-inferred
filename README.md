@@ -137,7 +137,6 @@ After:
   *   - Foo
   *
   * Returns:
-  *
   *   - Unit
   * <!-- explicitly-inferred:end -->
   */

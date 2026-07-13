@@ -700,7 +700,7 @@ object InferredReturnCommentPlugin {
 
         Seq(EffectManagedStart, "Errors:") ++
           errors.map(value => s"  - $value") ++
-          Seq("", "Returns:", "") ++
+          Seq("", "Returns:") ++
           results.map(value => s"  - $value") ++
           Seq(EffectManagedEnd)
       }
