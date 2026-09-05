@@ -3,17 +3,18 @@ package explicitlyinferred
 import java.util.regex.Pattern
 import scala.collection.mutable.ArrayBuffer
 
-private[explicitlyinferred] final class MethodMatcher private (steps: List[MethodMatcher.Step]) {
-  def matches(name: String): Boolean =
-    steps
-      .foldLeft(Option(name)) { (currentName, step) =>
-        currentName.flatMap { value =>
-          val matcher = step.pattern.matcher(value)
-          if !matcher.matches() then None
-          else step.rewrite.fold(Some(value))(rewrite => Some(MethodMatcher.rewrite(matcher, rewrite)))
-        }
-      }
-      .isDefined
+private[explicitlyinferred] final class MethodMatcher private (steps: Array[MethodMatcher.Step]) {
+  def matches(name: String): Boolean = {
+    var currentName = name
+    var index = 0
+    while index < steps.length do
+      val step = steps(index)
+      val matcher = step.pattern.matcher(currentName)
+      if !matcher.matches() then return false
+      step.rewrite.foreach(replacement => currentName = MethodMatcher.rewrite(matcher, replacement))
+      index += 1
+    true
+  }
 }
 
 private[explicitlyinferred] object MethodMatcher {
@@ -38,7 +39,7 @@ private[explicitlyinferred] object MethodMatcher {
     def result(): MethodMatcher = {
       if steps.lastOption.exists(_.rewrite.nonEmpty) then invalidRewrite(steps.last.rewrite.get)
       if steps.isEmpty then addRegex(".*")
-      new MethodMatcher(steps.toList)
+      new MethodMatcher(steps.toArray)
     }
   }
 

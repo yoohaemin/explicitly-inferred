@@ -26,7 +26,8 @@ final class ExplicitlyInferredPlugin extends StandardPlugin {
 private final class ExplicitlyInferredPhase(config: PluginConfig) extends PluginPhase {
   import tpd.*
 
-  private val commentsByUnit = mutable.HashMap.empty[CompilationUnit, IndexedSeq[Comment]]
+  private val unitStates = mutable.HashMap.empty[CompilationUnit, UnitState]
+  private val documentationBuilder = new EffectDocumentationBuilder(config.effect)
 
   override val phaseName = "explicitlyInferredPhase"
   override val runsAfter = Set(TyperPhase.name)
@@ -39,13 +40,13 @@ private final class ExplicitlyInferredPhase(config: PluginConfig) extends Plugin
 
   private def rewrite(tree: DefDef)(using context: Context): Unit =
     if eligible(tree) then
-      EffectDocumentation.from(tree.tpt.tpe, config.effect).foreach { documentation =>
-        val source = context.compilationUnit.source
-        val text = new String(source.content)
-        val layout = SourceLayout.declaration(text, tree.span.start)
+      documentationBuilder.from(tree.tpt.tpe).foreach { documentation =>
+        val unit = context.compilationUnit
+        val state = unitState(unit)
+        val layout = SourceLayout.declaration(state.text, tree.span.start, state.newline)
         val attachedComment =
           if layout.hasAnnotations then None
-          else nearestAttachedBlockComment(context.compilationUnit, text, layout.insertionOffset)
+          else state.nearestAttachedBlockComment(layout.insertionOffset)
 
         attachedComment match
           case Some(comment) =>
@@ -53,7 +54,7 @@ private final class ExplicitlyInferredPhase(config: PluginConfig) extends Plugin
               comment.span,
               ScaladocEditor.update(
                 comment.raw,
-                SourceLayout.commentIndentation(text, comment.span.start),
+                SourceLayout.commentIndentation(state.text, comment.span.start),
                 documentation,
                 config.effect.markers,
                 layout.newline
@@ -86,20 +87,36 @@ private final class ExplicitlyInferredPhase(config: PluginConfig) extends Plugin
       case Scope.NonPrivate => owner.isClass && !symbol.isOneOf(Flags.Private | Flags.PrivateLocal)
   }
 
-  private def nearestAttachedBlockComment(
-      unit: CompilationUnit,
-      text: String,
-      declarationStart: Int
-  ): Option[Comment] =
-    orderedComments(unit)
-      .reverseIterator
-      .filter(_.span.end <= declarationStart)
-      .find(comment => SourceLayout.isAttachedGap(text.substring(comment.span.end, declarationStart)))
-      .filter(_.raw.startsWith("/*"))
-
-  private def orderedComments(unit: CompilationUnit): IndexedSeq[Comment] =
-    commentsByUnit.getOrElseUpdate(unit, unit.comments.sortBy(_.span.end).toIndexedSeq)
+  private def unitState(unit: CompilationUnit): UnitState =
+    unitStates.getOrElseUpdate(unit, UnitState(unit))
 
   private def patch(span: Span, replacement: String)(using context: Context): Unit =
     if !Rewrites.overlapsPatch(context.compilationUnit.source, span) then Rewrites.patch(span, replacement)
+
+  private final class UnitState(val text: String, val newline: String, comments: IndexedSeq[Comment]) {
+    private val commentEnds = comments.map(_.span.end).toArray
+
+    def nearestAttachedBlockComment(declarationStart: Int): Option[Comment] = {
+      val index = upperBound(commentEnds, declarationStart) - 1
+      Option.when(index >= 0)(comments(index))
+        .filter(comment => SourceLayout.isAttachedGap(text, comment.span.end, declarationStart))
+        .filter(_.raw.startsWith("/*"))
+    }
+  }
+
+  private object UnitState {
+    def apply(unit: CompilationUnit): UnitState = {
+      val text = new String(unit.source.content)
+      new UnitState(text, SourceLayout.detectNewline(text), unit.comments.sortBy(_.span.end).toIndexedSeq)
+    }
+  }
+
+  private def upperBound(values: Array[Int], target: Int): Int = {
+    var low = 0
+    var high = values.length
+    while low < high do
+      val middle = low + (high - low) / 2
+      if values(middle) <= target then low = middle + 1 else high = middle
+    low
+  }
 }

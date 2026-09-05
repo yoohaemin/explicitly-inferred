@@ -1,7 +1,5 @@
 package explicitlyinferred
 
-import scala.collection.mutable.ArrayBuffer
-
 private[explicitlyinferred] final case class DeclarationLayout(
     insertionOffset: Int,
     indentation: String,
@@ -10,90 +8,75 @@ private[explicitlyinferred] final case class DeclarationLayout(
 )
 
 private[explicitlyinferred] object SourceLayout {
-  def declaration(text: String, treeStart: Int): DeclarationLayout = {
+  def declaration(text: String, treeStart: Int): DeclarationLayout =
+    declaration(text, treeStart, detectNewline(text))
+
+  def declaration(text: String, treeStart: Int, newline: String): DeclarationLayout = {
     val declarationLine = lineStart(text, treeStart)
-    val insertionOffset = declarationAnchor(text, declarationLine)
+    val (insertionOffset, hasAnnotations) = declarationAnchor(text, declarationLine)
     DeclarationLayout(
       insertionOffset,
       text.substring(insertionOffset, indentationEnd(text, insertionOffset)),
-      detectNewline(text),
-      declarationHasAnnotations(text, declarationLine)
+      newline,
+      hasAnnotations
     )
   }
 
   def commentIndentation(text: String, commentStart: Int): String =
     text.substring(lineStart(text, commentStart), commentStart)
 
-  def isAttachedGap(gap: String): Boolean =
-    gap.forall(_.isWhitespace) && newlineCount(gap) <= 1
+  def isAttachedGap(text: String, start: Int, end: Int): Boolean = {
+    var index = start
+    var newlines = 0
+    while index < end && text.charAt(index).isWhitespace && newlines <= 1 do
+      text.charAt(index) match
+        case '\r' =>
+          newlines += 1
+          if index + 1 < end && text.charAt(index + 1) == '\n' then index += 1
+        case '\n' => newlines += 1
+        case _ =>
+      index += 1
+    index == end && newlines <= 1
+  }
 
   def detectNewline(text: String, fallback: String = "\n"): String =
     if text.contains("\r\n") then "\r\n"
     else if text.contains('\n') then "\n"
     else fallback
 
-  private def newlineCount(text: String): Int =
-    text.foldLeft((0, false)) {
-      case ((count, _), '\r') => (count + 1, true)
-      case ((count, true), '\n') => (count, false)
-      case ((count, false), '\n') => (count + 1, false)
-      case ((count, _), _) => (count, false)
-    }._1
-
-  private def declarationAnchor(text: String, declarationLine: Int): Int = {
-    val precedingLines = contiguousNonBlankLinesBefore(text, declarationLine)
+  private def declarationAnchor(text: String, declarationLine: Int): (Int, Boolean) = {
     var anchor = declarationLine
     var delimiterBalance = DelimiterBalance.Zero
     var sawAnnotation = isAnnotationLine(lineText(text, declarationLine).trim)
     var stop = false
-    var index = precedingLines.length - 1
+    var currentLine = declarationLine
 
-    while index >= 0 && !stop do
-      val (lineStart, line) = precedingLines(index)
-      val trimmed = line.trim
-      if isCommentLine(trimmed) then
-        if sawAnnotation then anchor = lineStart
-      else
-        val delimiterDelta = backwardDelimiterDelta(trimmed)
-        if sawAnnotation && delimiterBalance.isZero &&
-            !isAnnotationLine(trimmed) && !delimiterDelta.hasPositive then
-          stop = true
-        else
-          delimiterBalance = delimiterBalance + delimiterDelta
-          if isAnnotationLine(trimmed) && delimiterBalance.isZero then
-            sawAnnotation = true
-            anchor = lineStart
-          else if sawAnnotation && delimiterBalance.nonZero then
-            anchor = lineStart
-          else if sawAnnotation then
-            stop = true
-          else if delimiterBalance.isZero then
-            stop = true
-      index -= 1
-
-    anchor
-  }
-
-  private def declarationHasAnnotations(text: String, declarationLine: Int): Boolean =
-    isAnnotationLine(lineText(text, declarationLine).trim) ||
-      contiguousNonBlankLinesBefore(text, declarationLine).exists { (_, line) => isAnnotationLine(line.trim) }
-
-  private def contiguousNonBlankLinesBefore(text: String, currentLine: Int): IndexedSeq[(Int, String)] = {
-    val lines = ArrayBuffer.empty[(Int, String)]
-    var line = currentLine
-    var continue = true
-
-    while continue do
-      previousLineStart(text, line) match
+    while currentLine > 0 && !stop do
+      previousLineStart(text, currentLine) match
+        case None => stop = true
         case Some(previousStart) =>
-          val previousText = lineText(text, previousStart)
-          if previousText.trim.isEmpty then continue = false
+          val trimmed = lineText(text, previousStart).trim
+          if trimmed.isEmpty then stop = true
           else
-            lines.prepend(previousStart -> previousText)
-            line = previousStart
-        case None => continue = false
+            if isCommentLine(trimmed) then
+              if sawAnnotation then anchor = previousStart
+            else
+              val delimiterDelta = backwardDelimiterDelta(trimmed)
+              if sawAnnotation && delimiterBalance.isZero &&
+                  !isAnnotationLine(trimmed) && !delimiterDelta.hasPositive then
+                stop = true
+              else
+                delimiterBalance = delimiterBalance + delimiterDelta
+                if isAnnotationLine(trimmed) && delimiterBalance.isZero then
+                  sawAnnotation = true
+                  anchor = previousStart
+                else if sawAnnotation && delimiterBalance.nonZero then
+                  anchor = previousStart
+                else if sawAnnotation || delimiterBalance.isZero then
+                  stop = true
+            currentLine = previousStart
 
-    lines.toIndexedSeq
+    anchor -> sawAnnotation
   }
 
   private final case class DelimiterBalance(parens: Int, brackets: Int, braces: Int) {

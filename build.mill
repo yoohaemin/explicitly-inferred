@@ -14,6 +14,19 @@ object `package` extends Module {
     def defaultCrossSegments = Seq(supportedScalaVersions.last)
   }
 
+  object benchmark extends ScalaModule {
+    def scalaVersion = supportedScalaVersions.last
+    def moduleDeps = Seq(plugin(supportedScalaVersions.last))
+
+    override def sources = Task.Sources(repoRoot / "benchmark" / "src")
+    override def resources = Task.Sources()
+
+    def mvnDeps = Seq(
+      mvn"com.lihaoyi::os-lib:0.11.5",
+      mvn"org.scala-lang::scala3-compiler:${scalaVersion()}"
+    )
+  }
+
   trait PluginModule extends CrossScalaModule with PublishModule with VcsVersionModule {
     def scalaVersion = crossValue
     override def artifactName = "explicitly-inferred"

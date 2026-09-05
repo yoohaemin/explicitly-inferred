@@ -39,10 +39,19 @@ object SourceLayoutTests extends TestSuite {
     }
 
     test("detects attached gaps and newline styles") {
-      assert(SourceLayout.isAttachedGap("  \n"))
-      assert(!SourceLayout.isAttachedGap("\n\n"))
-      assert(!SourceLayout.isAttachedGap(" text \n"))
+      assert(SourceLayout.isAttachedGap("  \n", 0, 3))
+      assert(!SourceLayout.isAttachedGap("\n\n", 0, 2))
+      assert(!SourceLayout.isAttachedGap(" text \n", 0, 7))
       assert(SourceLayout.detectNewline("a\r\nb") == "\r\n")
+    }
+
+    test("stops after the local declaration context in a long source") {
+      val unrelated = (0 until 10000).map(index => s"val value$index = $index").mkString("\n")
+      val source = s"$unrelated\n\n@deprecated(\"old\", \"1.0\")\ndef target = 1\n"
+      val layout = SourceLayout.declaration(source, source.indexOf("def target"))
+
+      assert(source.substring(layout.insertionOffset).startsWith("@deprecated"))
+      assert(layout.hasAnnotations)
     }
   }
 }

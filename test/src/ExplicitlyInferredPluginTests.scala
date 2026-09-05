@@ -25,6 +25,46 @@ object ExplicitlyInferredPluginTests extends TestSuite {
       assert(output.indexOf("<!-- /types -->") < output.indexOf("@param input"))
     }
 
+    test("finds attached block comments throughout a compilation unit") {
+      val input =
+        """object Sample {
+          |  final class Effect[R, E, A]
+          |  /** first */
+          |  def first = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |
+          |  /** middle */
+          |  def middle = null.asInstanceOf[Effect[Any, Nothing, String]]
+          |
+          |  /** last */
+          |  def last = null.asInstanceOf[Effect[Any, Nothing, Long]]
+          |}
+          |""".stripMargin
+
+      val output = rewrite(input)
+
+      assert(output.contains("first"))
+      assert(output.contains("middle"))
+      assert(output.contains("last"))
+      assert(output.split("<!-- types -->", -1).length == 4)
+    }
+
+    test("does not attach an older block comment past a nearer line comment") {
+      val input =
+        """object Sample {
+          |  final class Effect[R, E, A]
+          |  /** old block */
+          |  // nearest comment
+          |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |}
+          |""".stripMargin
+
+      val output = rewrite(input)
+
+      assert(output.contains("/** old block */"))
+      assert(output.indexOf("// nearest comment") < output.indexOf("<!-- types -->"))
+      assert(output.indexOf("<!-- types -->") < output.indexOf("def value"))
+    }
+
     test("inserts above multiline annotations") {
       val input =
         """object Sample {

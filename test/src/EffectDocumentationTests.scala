@@ -137,5 +137,33 @@ object EffectDocumentationTests extends TestSuite {
 
       assert(rewrite(input) == input)
     }
+
+    test("renders a large balanced union of intersections") {
+      val memberCount = 64
+      val declarations = (0 until memberCount)
+        .flatMap(index => Seq(s"  trait Left$index", s"  trait Right$index"))
+        .mkString("\n")
+      val members = (0 until memberCount).map(index => s"Left$index & Right$index")
+      val errorType = balanced("|", members)
+      val input =
+        s"""object Sample {
+           |  final class Effect[R, E, A]
+           |$declarations
+           |  def value = null.asInstanceOf[Effect[Any, $errorType, Int]]
+           |}
+           |""".stripMargin
+
+      val output = rewrite(input)
+
+      assert(output.linesIterator.count(_.contains("*   - ")) == memberCount + 1)
+      assert(output.contains("Left0 & Right0"))
+      assert(output.contains("Left63 & Right63"))
+    }
   }
+
+  private def balanced(operator: String, values: IndexedSeq[String]): String =
+    if values.size == 1 then values.head
+    else
+      val (left, right) = values.splitAt(values.size / 2)
+      s"(${balanced(operator, left)} $operator ${balanced(operator, right)})"
 }

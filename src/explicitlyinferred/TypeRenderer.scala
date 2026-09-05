@@ -5,6 +5,8 @@ import dotty.tools.dotc.core.Flags
 import dotty.tools.dotc.core.Symbols.Symbol
 import dotty.tools.dotc.core.Types.*
 
+import scala.collection.mutable
+
 private[explicitlyinferred] enum AliasPolicy {
   case Dealias, Preserve
 }
@@ -47,12 +49,11 @@ private[explicitlyinferred] object TypeRenderer {
   }
 
   def unionEntries(tpe: Type, settings: TypeRenderSettings)(using Context): List[RenderedType] =
-    flattenUnion(tpe, settings.aliasPolicy)
-      .map(part => (toNode(part, settings), fullTypeName(part)))
-      .sortBy(_._1.sortKey)
-      .foldLeft(List.empty[(TypeNode, String)]) { (entries, entry) =>
-        if entries.lastOption.exists(_._1.sortKey == entry._1.sortKey) then entries else entries :+ entry
-      }
+    dedupeSortedEntries(
+      flattenUnion(tpe, settings.aliasPolicy)
+        .map(part => (toNode(part, settings), fullTypeName(part)))
+        .sortBy(_._1.sortKey)
+    )
       .map { (node, fullName) => RenderedType(render(node), node.sortKey, fullName) }
 
   def fullTypeName(tpe: Type)(using Context): String = {
@@ -98,14 +99,32 @@ private[explicitlyinferred] object TypeRenderer {
       case AliasPolicy.Preserve => tpe.widen.simplified.normalized
 
   private def flattenUnion(tpe: Type, aliasPolicy: AliasPolicy)(using Context): List[Type] =
-    normalize(tpe, aliasPolicy) match
-      case OrType(left, right) => flattenUnion(left, aliasPolicy) ::: flattenUnion(right, aliasPolicy)
-      case other => other :: Nil
+    flatten(tpe, aliasPolicy) {
+      case OrType(left, right) => Some(left -> right)
+      case _ => None
+    }
 
   private def flattenIntersection(tpe: Type, aliasPolicy: AliasPolicy)(using Context): List[Type] =
-    normalize(tpe, aliasPolicy) match
-      case AndType(left, right) => flattenIntersection(left, aliasPolicy) ::: flattenIntersection(right, aliasPolicy)
-      case other => other :: Nil
+    flatten(tpe, aliasPolicy) {
+      case AndType(left, right) => Some(left -> right)
+      case _ => None
+    }
+
+  private def flatten(
+      tpe: Type,
+      aliasPolicy: AliasPolicy
+  )(split: Type => Option[(Type, Type)])(using Context): List[Type] = {
+    val pending = mutable.ArrayDeque(tpe)
+    val result = mutable.ListBuffer.empty[Type]
+    while pending.nonEmpty do
+      val current = normalize(pending.removeHead(), aliasPolicy)
+      split(current) match
+        case Some((left, right)) =>
+          pending.prepend(right)
+          pending.prepend(left)
+        case None => result += current
+    result.toList
+  }
 
   private def isNamedTuple(tycon: Type, args: List[Type])(using Context): Boolean =
     args.size == 2 &&
@@ -113,7 +132,7 @@ private[explicitlyinferred] object TypeRenderer {
       tycon.typeSymbol.owner.name.show == "NamedTuple"
 
   private def isOrdinaryTuple(tycon: Type, args: List[Type])(using Context): Boolean =
-    args.size >= 2 && fullTypeName(tycon).matches("scala\\.Tuple[0-9]+")
+    args.size >= 2 && isTupleConstructor(tycon)
 
   private def namedTuple(args: List[Type], settings: TypeRenderSettings)(using Context): Option[TypeNode] =
     for
@@ -134,18 +153,36 @@ private[explicitlyinferred] object TypeRenderer {
 
   private def tupleElements(tpe: Type, aliasPolicy: AliasPolicy)(using Context): Option[List[Type]] =
     normalize(tpe, aliasPolicy) match
-      case AppliedType(tycon, args) if fullTypeName(tycon).matches("scala\\.Tuple[0-9]+") => Some(args)
+      case AppliedType(tycon, args) if isTupleConstructor(tycon) => Some(args)
       case _ => None
+
+  private def isTupleConstructor(tpe: Type)(using Context): Boolean = {
+    val prefix = "scala.Tuple"
+    val name = fullTypeName(tpe)
+    val arity = name.drop(prefix.length)
+    name.startsWith(prefix) && arity.nonEmpty && arity.forall(_.isDigit)
+  }
 
   private def isCompilerInternalAlias(tpe: Type)(using Context): Boolean = {
     val symbol = tpe.typeSymbol
     symbol.exists && symbol.owner.name.show == "Signature"
   }
 
-  private def dedupe(nodes: List[TypeNode]): List[TypeNode] =
-    nodes.foldLeft(List.empty[TypeNode]) { (result, node) =>
-      if result.lastOption.exists(_.sortKey == node.sortKey) then result else result :+ node
+  private def dedupe(nodes: List[TypeNode]): List[TypeNode] = {
+    val result = mutable.ListBuffer.empty[TypeNode]
+    nodes.foreach { node =>
+      if result.lastOption.forall(_.sortKey != node.sortKey) then result += node
     }
+    result.toList
+  }
+
+  private def dedupeSortedEntries(entries: List[(TypeNode, String)]): List[(TypeNode, String)] = {
+    val result = mutable.ListBuffer.empty[(TypeNode, String)]
+    entries.foreach { entry =>
+      if result.lastOption.forall(_._1.sortKey != entry._1.sortKey) then result += entry
+    }
+    result.toList
+  }
 
   private def displayName(tpe: Type, settings: TypeRenderSettings)(using Context): String =
     normalize(tpe, settings.aliasPolicy) match

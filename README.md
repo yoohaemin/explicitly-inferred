@@ -149,6 +149,29 @@ Publish locally:
 ./mill 'plugin[3.9.0].publishLocal'
 ```
 
+### Performance Benchmark
+
+The manual benchmark compares median Scala compiler process time with and without the plugin. Run the full matrix with two warmups and seven measured iterations per mode:
+
+```bash
+./mill benchmark.run
+```
+
+The scenarios isolate different plugin costs:
+
+- `many-methods` processes 1,000 inferred effect methods.
+- `many-comments` adds an existing Scaladoc comment to every method.
+- `large-union` renders a balanced 256-member error union for 100 methods.
+- `early-mismatch` rejects 5,000 methods at the first stage of an eight-stage method pipeline.
+
+For a quicker targeted run, select one scenario and reduce the iteration counts:
+
+```bash
+./mill benchmark.run --warmups 1 --iterations 3 --scenario large-union
+```
+
+Compare `overhead_ms` (`plugin_ms - baseline_ms`) between revisions on the same idle machine, JDK, and Scala version. The baseline column includes compiler startup and normal compilation, while the ratio reports total plugin time divided by total baseline time.
+
 ## Release
 
 Pushing a `vX.Y.Z` tag publishes the Scala 3.9.0 artifact to Maven Central:
