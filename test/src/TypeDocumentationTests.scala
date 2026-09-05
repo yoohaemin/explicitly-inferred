@@ -97,11 +97,11 @@ object TypeDocumentationTests extends TestSuite {
       val dependency =
         """import neotype.Subtype
           |
-          |object AdminImpersonation {
+          |object FirstOwner {
           |  object Code extends Subtype[String]
           |}
           |
-          |object CustomerImpersonation {
+          |object SecondOwner {
           |  object Code extends Subtype[String]
           |}
           |""".stripMargin
@@ -110,16 +110,45 @@ object TypeDocumentationTests extends TestSuite {
           |
           |  final class Container[C, L, R]
           |  def code = null.asInstanceOf[
-          |    Container[Any, Nothing, AdminImpersonation.Code.Type | CustomerImpersonation.Code.Type]
+          |    Container[Any, Nothing, FirstOwner.Code.Type | SecondOwner.Code.Type]
           |  ]
           |}
           |""".stripMargin
 
       val output = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=owner"))
 
-      assert(output.contains("*   - AdminImpersonation.Code"))
-      assert(output.contains("*   - CustomerImpersonation.Code"))
+      assert(output.contains("*   - FirstOwner.Code"))
+      assert(output.contains("*   - SecondOwner.Code"))
       assert(!output.contains("*   - Subtype.Type"))
+    }
+
+    test("hides synthetic package owners for top-level aliases") {
+      val dependency =
+        """package domain
+          |
+          |import neotype.Subtype
+          |
+          |type Timestamp = Timestamp.Type
+          |object Timestamp extends Subtype[java.time.Instant]
+          |""".stripMargin
+      val input =
+        """package usage
+          |
+          |import domain.Timestamp
+          |
+          |object Sample {
+          |  final class Container[C, L, R]
+          |  def timestamp = null.asInstanceOf[Container[Any, Nothing, Option[(Timestamp, String)]]]
+          |}
+          |""".stripMargin
+
+      val owner = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=owner"))
+      val full = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=full"))
+
+      assert(owner.contains("*   - Option[(Timestamp, String)]"))
+      assert(!owner.contains("$package"))
+      assert(full.contains("domain.Timestamp"))
+      assert(!full.contains("$package"))
     }
 
     test("uses Nothing only as the empty section fallback") {

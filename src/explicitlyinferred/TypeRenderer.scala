@@ -213,28 +213,47 @@ private[explicitlyinferred] object TypeRenderer {
   private def displaySymbol(symbol: Symbol, style: TypeNameStyle)(using Context): String =
     style match
       case TypeNameStyle.Simple => symbol.name.show
-      case TypeNameStyle.Full => symbol.fullName.show
+      case TypeNameStyle.Full => sourceFullName(symbol)
       case TypeNameStyle.Owner =>
-        val owner = symbol.owner
-        if symbol.fullName.show.startsWith("scala.") then symbol.name.show
+        val owner = sourceOwner(symbol)
+        if sourceFullName(symbol).startsWith("scala.") then symbol.name.show
         else if owner.exists && !owner.is(Flags.Package) then s"${owner.name.show}.${symbol.name.show}"
         else symbol.name.show
+
+  private def sourceOwner(symbol: Symbol)(using Context): Symbol = {
+    val owner = symbol.owner
+    if isSyntheticPackageModule(owner) then owner.owner else owner
+  }
+
+  private def sourceFullName(symbol: Symbol)(using Context): String = {
+    val owner = sourceOwner(symbol)
+    if owner.exists && owner.is(Flags.Package) then
+      val ownerName = owner.fullName.show
+      if ownerName.isEmpty || ownerName == "<root>" then symbol.name.show else s"$ownerName.${symbol.name.show}"
+    else symbol.fullName.show
+  }
+
+  private def isSyntheticPackageModule(symbol: Symbol)(using Context): Boolean =
+    symbol.exists && symbol.owner.is(Flags.Package) && symbol.name.show.endsWith("$package")
 
   private def stableKey(tpe: Type, display: String, aliasPolicy: AliasPolicy)(using Context): String = {
     val normalized = normalize(tpe, aliasPolicy)
     normalized match
       case ref: TypeRef =>
         concreteOpaqueOwner(ref, aliasPolicy) match
-          case Some(owner) => s"${owner.coord}:${owner.fullName.show}"
+          case Some(owner) => stableSymbolKey(owner)
           case None => symbolKey(normalized, display)
       case _ => symbolKey(normalized, display)
   }
 
   private def symbolKey(tpe: Type, display: String)(using Context): String = {
     val symbol = tpe.typeSymbol
-    if symbol.exists then s"${symbol.coord}:${symbol.owner.fullName.show}.${symbol.name.show}"
+    if symbol.exists then stableSymbolKey(symbol)
     else s"$display#${tpe.show}"
   }
+
+  private def stableSymbolKey(symbol: Symbol)(using Context): String =
+    s"${symbol.coord}:${sourceFullName(symbol)}"
 
   private def render(node: TypeNode, parentPrecedence: Int = 0): String = {
     val value = node match
