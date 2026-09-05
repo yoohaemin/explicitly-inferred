@@ -16,7 +16,7 @@ For example, Scala `3.9.0` resolves:
 com.yoohaemin:explicitly-inferred_3.9.0:<plugin-version>
 ```
 
-Supported Scala compiler versions are:
+Source compatibility is tested against these Scala compiler versions:
 
 ```text
 3.5.0, 3.5.1, 3.5.2,
@@ -282,7 +282,7 @@ Publish to the local Ivy repository:
 
 ## Release
 
-The release workflow publishes every supported compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed. It uses Mill's `SonatypeCentralPublishModule/publishAll` entrypoint with `plugin[__].publishArtifacts`, so all Scala-version variants are signed and uploaded as one Central bundle.
+The release workflow publishes the Scala `3.9.0` compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed. Older compiler versions remain in the test matrix but are not published by new releases.
 
 ```bash
 git tag v0.1.0
@@ -293,7 +293,7 @@ The equivalent manual release command is:
 
 ```bash
 ./mill mill.javalib.SonatypeCentralPublishModule/publishAll \
-  --publishArtifacts 'plugin[__].publishArtifacts' \
+  --publishArtifacts 'plugin[3.9.0].publishArtifacts' \
   --bundleName "com.yoohaemin-explicitly-inferred-v0.1.0"
 ```
 
