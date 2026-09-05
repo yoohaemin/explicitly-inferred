@@ -16,13 +16,9 @@ For example, Scala `3.9.0` resolves:
 com.yoohaemin:explicitly-inferred_3.9.0:<plugin-version>
 ```
 
-Source compatibility is tested against these Scala compiler versions:
+The plugin supports Scala compiler version:
 
 ```text
-3.5.0, 3.5.1, 3.5.2,
-3.6.0, 3.6.1, 3.6.2, 3.6.3, 3.6.4,
-3.7.0, 3.7.1, 3.7.2, 3.7.3, 3.7.4,
-3.8.0, 3.8.1, 3.8.2, 3.8.3, 3.8.4,
 3.9.0
 ```
 
@@ -266,23 +262,17 @@ Run the test suite:
 ./mill 'plugin[3.9.0].test.testCached'
 ```
 
-Run the test suite across every supported Scala compiler version:
-
-```bash
-./mill 'plugin[__].test.testCached'
-```
-
-CI covers JDK `17` and `21` across all supported Scala compiler versions, JDK `25` on Scala `3.7.1+`, and JDK `26` on Scala `3.8.x`.
+CI tests Scala `3.9.0` on JDK `17`, `21`, `25`, and `26`.
 
 Publish to the local Ivy repository:
 
 ```bash
-./mill 'plugin[__].publishLocal'
+./mill 'plugin[3.9.0].publishLocal'
 ```
 
 ## Release
 
-The release workflow publishes the Scala `3.9.0` compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed. Older compiler versions remain in the test matrix but are not published by new releases.
+The release workflow publishes the Scala `3.9.0` compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed.
 
 ```bash
 git tag v0.1.0
