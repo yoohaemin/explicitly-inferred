@@ -133,7 +133,7 @@ object EffectScaladocPluginTests extends TestSuite {
         s"""object Sample {
            |  final class Effect[R, E, A]
            |
-           |  /** <!-- types -->
+           |  /** <!-- explicitly-inferred:start -->
            |    * Errors:
            |    *
            |    *   - `String`
@@ -141,7 +141,7 @@ object EffectScaladocPluginTests extends TestSuite {
            |    * Returns:
            |    *
            |    *   - `String`
-           |    * <!-- /types -->
+           |    * <!-- explicitly-inferred:end -->
            |    */
            |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
            |}
@@ -150,6 +150,7 @@ object EffectScaladocPluginTests extends TestSuite {
       val output = rewrite(input, extraOptions = effectOptions)
 
       assert(output.split("<!-- types -->", -1).length == 2)
+      assert(!output.contains("explicitly-inferred"))
       assert(output.contains("*   - Nothing"))
       assert(output.contains("*   - Int"))
       assert(!output.contains("*   - String"))

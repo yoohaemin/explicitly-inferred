@@ -177,6 +177,8 @@ object InferredReturnCommentPlugin {
   private val ManagedContinuationPrefix = "  "
   private val EffectManagedStart = "<!-- types -->"
   private val EffectManagedEnd = "<!-- /types -->"
+  private val LegacyEffectManagedStart = "<!-- explicitly-inferred:start -->"
+  private val LegacyEffectManagedEnd = "<!-- explicitly-inferred:end -->"
 
   private final case class Config(
       methodSteps: List[MethodRegexStep],
@@ -809,8 +811,8 @@ object InferredReturnCommentPlugin {
         newline: String
     ): String = {
       val lines = ArrayBuffer.from(raw.split(Pattern.quote(newline), -1).toSeq)
-      val start = lines.indexWhere(_.contains(EffectManagedStart))
-      val end = lines.indexWhere(_.contains(EffectManagedEnd))
+      val start = lines.indexWhere(containsEffectManagedStart)
+      val end = lines.indexWhere(containsEffectManagedEnd)
       val linePrefix = preferredBlockLinePrefix(lines.toSeq, commentIndent)
       val managedRawLines = managedLines.map {
         case "" => linePrefix.stripSuffix(" ")
@@ -819,7 +821,7 @@ object InferredReturnCommentPlugin {
 
       val insertAt =
         if start >= 0 && end >= start then {
-          val markerOffset = lines(start).indexOf(EffectManagedStart)
+          val markerOffset = effectManagedStartMarker(lines(start)).map(lines(start).indexOf).getOrElse(0)
           val markerIsOnOpener = lines(start).take(markerOffset).trim.endsWith("/**")
           if markerIsOnOpener then {
             lines(start) = lines(start).take(markerOffset).stripTrailing()
@@ -849,6 +851,15 @@ object InferredReturnCommentPlugin {
       lines.insertAll(insertAt, block)
       lines.mkString(newline)
     }
+
+    private def containsEffectManagedStart(line: String): Boolean =
+      effectManagedStartMarker(line).nonEmpty
+
+    private def containsEffectManagedEnd(line: String): Boolean =
+      line.contains(EffectManagedEnd) || line.contains(LegacyEffectManagedEnd)
+
+    private def effectManagedStartMarker(line: String): Option[String] =
+      Seq(EffectManagedStart, LegacyEffectManagedStart).find(line.contains)
 
     private def updateExistingBlockComment(comment: Comment, text: String, managedLines: Seq[String], sourceNewline: String): String =
       val raw = comment.raw
