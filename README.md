@@ -104,12 +104,22 @@ That is usually enough to rewrite inferred member defs with the default managed 
 | `additionalErrorType=<display-name>` | none | Adds a public error entry. Repeatable. |
 | `excludeErrorTypeRegex=<java-regex>` | none | Removes matching internal errors. Repeatable. |
 | `typeNameStyle=simple\|owner\|full` | `simple` | Controls qualification of rendered type names. |
+| `effectStartMarker=<text>` | `types` | Sets the opening managed-region marker body in effect mode. |
+| `effectEndMarker=<text>` | `/types` | Sets the closing managed-region marker body in effect mode. |
 
 ### Effect Scaladoc
 
 Effect mode documents the inferred error and result parameters of a matching effect type. Union
 members are dealiased, deduplicated, sorted, and emitted one per line inside a managed Scaladoc
 region. Existing prose and tags outside the region are preserved.
+
+Marker values are single-line HTML-comment bodies. For example, the defaults `types` and `/types`
+are rendered as `<!-- types -->` and `<!-- /types -->`. To use a custom pair:
+
+```text
+-P:inferredReturnComment:effectStartMarker=effect-types
+-P:inferredReturnComment:effectEndMarker=/effect-types
+```
 
 ```text
 -P:inferredReturnComment:mode=effectScaladoc

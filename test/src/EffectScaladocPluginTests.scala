@@ -50,6 +50,27 @@ object EffectScaladocPluginTests extends TestSuite {
       assert(rewrite(once, extraOptions = effectOptions) == expected)
     }
 
+    test("writes and updates configurable effect markers") {
+      val input =
+        s"""object Sample {
+           |  final class Effect[R, E, A]
+           |
+           |  def value = null.asInstanceOf[Effect[Any, String, Int]]
+           |}
+           |""".stripMargin
+      val options = effectOptions ++ Seq(
+        "effectStartMarker=effect-types",
+        "effectEndMarker=/effect-types"
+      )
+
+      val once = rewrite(input, extraOptions = options)
+
+      assert(once.contains("<!-- effect-types -->"))
+      assert(once.contains("<!-- /effect-types -->"))
+      assert(!once.contains("<!-- types -->"))
+      assert(rewrite(once, extraOptions = options) == once)
+    }
+
     test("adds public errors, removes internal errors, and renders Nothing") {
       val input =
         s"""object Sample {
@@ -128,12 +149,12 @@ object EffectScaladocPluginTests extends TestSuite {
       assert(rewrite(input, extraOptions = effectOptions) == input)
     }
 
-    test("updates Scalafmt-style inline opening markers without duplicating the region") {
+    test("updates Scalafmt-style inline custom markers without duplicating the region") {
       val input =
         s"""object Sample {
            |  final class Effect[R, E, A]
            |
-           |  /** <!-- explicitly-inferred:start -->
+           |  /** <!-- effect-types -->
            |    * Errors:
            |    *
            |    *   - `String`
@@ -141,19 +162,40 @@ object EffectScaladocPluginTests extends TestSuite {
            |    * Returns:
            |    *
            |    *   - `String`
-           |    * <!-- explicitly-inferred:end -->
+           |    * <!-- /effect-types -->
            |    */
            |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
            |}
            |""".stripMargin
+      val options = effectOptions ++ Seq(
+        "effectStartMarker=effect-types",
+        "effectEndMarker=/effect-types"
+      )
 
-      val output = rewrite(input, extraOptions = effectOptions)
+      val output = rewrite(input, extraOptions = options)
 
-      assert(output.split("<!-- types -->", -1).length == 2)
-      assert(!output.contains("explicitly-inferred"))
+      assert(output.split("<!-- effect-types -->", -1).length == 2)
+      assert(output.split("<!-- /effect-types -->", -1).length == 2)
       assert(output.contains("*   - Nothing"))
       assert(output.contains("*   - Int"))
       assert(!output.contains("*   - String"))
+    }
+
+    test("rejects invalid effect markers") {
+      val input =
+        s"""object Sample {
+           |  final class Effect[R, E, A]
+           |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
+           |}
+           |""".stripMargin
+
+      rewriteExpectFailure(input, extraOptions = effectOptions :+ "effectStartMarker=")
+      rewriteExpectFailure(input, extraOptions = effectOptions :+ "effectEndMarker=line1\nline2")
+      rewriteExpectFailure(input, extraOptions = effectOptions :+ "effectStartMarker=bad--marker")
+      rewriteExpectFailure(
+        input,
+        extraOptions = effectOptions ++ Seq("effectStartMarker=same", "effectEndMarker=same")
+      )
     }
   }
 }

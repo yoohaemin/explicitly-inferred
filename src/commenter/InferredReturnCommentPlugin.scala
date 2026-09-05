@@ -39,6 +39,8 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
       |-P:inferredReturnComment:additionalErrorType=<display-name>
       |-P:inferredReturnComment:excludeErrorTypeRegex=<java-regex>
       |-P:inferredReturnComment:typeNameStyle=simple|owner|full
+      |-P:inferredReturnComment:effectStartMarker=<html-comment-text>
+      |-P:inferredReturnComment:effectEndMarker=<html-comment-text>
       |
       |Repeat methodRegex to build a left-to-right match pipeline.
       |methodRegexRewrite must immediately follow a capturing methodRegex and
@@ -64,15 +66,14 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
     val additionalErrorTypes = ArrayBuffer.empty[String]
     val excludeErrorTypeRegexes = ArrayBuffer.empty[Pattern]
     var typeNameStyle = TypeNameStyle.Simple
-
-    def invalidMethodRegex(value: String): Nothing =
-      throw new IllegalArgumentException(s"Invalid $PluginName methodRegex: $value")
+    var effectStartMarker = DefaultEffectStartMarker
+    var effectEndMarker = DefaultEffectEndMarker
 
     def invalidMethodRegexRewrite(value: String): Nothing =
       throw new IllegalArgumentException(s"Invalid $PluginName methodRegexRewrite: $value")
 
     def compileMethodRegex(value: String): MethodRegexStep = {
-      val pattern = Try(Pattern.compile(value)).getOrElse(invalidMethodRegex(value))
+      val pattern = compileRegex("methodRegex", value)
       MethodRegexStep(pattern, pattern.matcher("").groupCount(), None)
     }
 
@@ -103,10 +104,7 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
           case None =>
             throw new IllegalArgumentException(s"Invalid $PluginName maxTypeLength: ${option.stripPrefix("maxTypeLength=")}")
       case option if option.startsWith("managedTag=") =>
-        ManagedTagOption.fromOption(option.stripPrefix("managedTag=")) match
-          case Some(value) => managedTag = value
-          case None =>
-            throw new IllegalArgumentException(s"Invalid $PluginName managedTag: ${option.stripPrefix("managedTag=")}")
+        managedTag = parseSingleLineOption("managedTag", option.stripPrefix("managedTag="))
       case option if option.startsWith("showTypeArgs=") =>
         BooleanOption.fromOption(option.stripPrefix("showTypeArgs=")) match
           case Some(value) => showTypeArgs = value
@@ -124,31 +122,33 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
             throw new IllegalArgumentException(s"Unknown $PluginName mode: ${option.stripPrefix("mode=")}")
       case option if option.startsWith("effectTypeRegex=") =>
         val value = option.stripPrefix("effectTypeRegex=")
-        effectTypeRegex = Try(Pattern.compile(value)).getOrElse {
-          throw new IllegalArgumentException(s"Invalid $PluginName effectTypeRegex: $value")
-        }
+        effectTypeRegex = compileRegex("effectTypeRegex", value)
       case option if option.startsWith("errorTypeParam=") =>
         errorTypeParam = TypeParamOption.parse("errorTypeParam", option.stripPrefix("errorTypeParam="))
       case option if option.startsWith("resultTypeParam=") =>
         resultTypeParam = TypeParamOption.parse("resultTypeParam", option.stripPrefix("resultTypeParam="))
       case option if option.startsWith("additionalErrorType=") =>
-        additionalErrorTypes += DisplayTypeOption.parse("additionalErrorType", option.stripPrefix("additionalErrorType="))
+        additionalErrorTypes += parseSingleLineOption("additionalErrorType", option.stripPrefix("additionalErrorType="))
       case option if option.startsWith("excludeErrorTypeRegex=") =>
         val value = option.stripPrefix("excludeErrorTypeRegex=")
-        excludeErrorTypeRegexes += Try(Pattern.compile(value)).getOrElse {
-          throw new IllegalArgumentException(s"Invalid $PluginName excludeErrorTypeRegex: $value")
-        }
+        excludeErrorTypeRegexes += compileRegex("excludeErrorTypeRegex", value)
       case option if option.startsWith("typeNameStyle=") =>
         TypeNameStyle.fromOption(option.stripPrefix("typeNameStyle=")) match
           case Some(value) => typeNameStyle = value
           case None =>
             throw new IllegalArgumentException(s"Unknown $PluginName typeNameStyle: ${option.stripPrefix("typeNameStyle=")}")
+      case option if option.startsWith("effectStartMarker=") =>
+        effectStartMarker = parseEffectMarker("effectStartMarker", option.stripPrefix("effectStartMarker="))
+      case option if option.startsWith("effectEndMarker=") =>
+        effectEndMarker = parseEffectMarker("effectEndMarker", option.stripPrefix("effectEndMarker="))
       case option =>
         throw new IllegalArgumentException(s"Unknown $PluginName option: $option")
     }
 
     if methodSteps.lastOption.exists(_.rewrite.nonEmpty) then
       invalidMethodRegexRewrite(methodSteps.last.rewrite.get)
+    if effectStartMarker == effectEndMarker then
+      throw new IllegalArgumentException(s"$PluginName effect markers must be different")
 
     val compiledMethodSteps =
       if methodSteps.nonEmpty then methodSteps.toList
@@ -160,7 +160,9 @@ final class InferredReturnCommentPlugin extends StandardPlugin {
       resultTypeParam,
       additionalErrorTypes.toList,
       excludeErrorTypeRegexes.toList,
-      typeNameStyle
+      typeNameStyle,
+      effectStartMarker,
+      effectEndMarker
     )
     Some(Config(
       compiledMethodSteps,
@@ -175,10 +177,8 @@ object InferredReturnCommentPlugin {
   private val PluginName = "inferredReturnComment"
   private val DefaultManagedTag = "@inferredReturnType"
   private val ManagedContinuationPrefix = "  "
-  private val EffectManagedStart = "<!-- types -->"
-  private val EffectManagedEnd = "<!-- /types -->"
-  private val LegacyEffectManagedStart = "<!-- explicitly-inferred:start -->"
-  private val LegacyEffectManagedEnd = "<!-- explicitly-inferred:end -->"
+  private val DefaultEffectStartMarker = "types"
+  private val DefaultEffectEndMarker = "/types"
 
   private final case class Config(
       methodSteps: List[MethodRegexStep],
@@ -209,8 +209,13 @@ object InferredReturnCommentPlugin {
       resultTypeParam: String,
       additionalErrorTypes: List[String],
       excludeErrorTypeRegexes: List[Pattern],
-      typeNameStyle: TypeNameStyle
-  )
+      typeNameStyle: TypeNameStyle,
+      startMarker: String,
+      endMarker: String
+  ) {
+    def startDelimiter: String = s"<!-- $startMarker -->"
+    def endDelimiter: String = s"<!-- $endMarker -->"
+  }
 
   private enum Mode {
     case ReturnComment, EffectScaladoc
@@ -252,13 +257,6 @@ object InferredReturnCommentPlugin {
       Try(value.toInt).toOption.filter(_ > 0)
   }
 
-  private object ManagedTagOption {
-    def fromOption(value: String): Option[String] = {
-      val trimmed = value.trim
-      Option.when(trimmed.nonEmpty && !trimmed.contains('\n') && !trimmed.contains('\r'))(trimmed)
-    }
-  }
-
   private object BooleanOption {
     def fromOption(value: String): Option[Boolean] = value match
       case "true" => Some(true)
@@ -274,12 +272,21 @@ object InferredReturnCommentPlugin {
     }
   }
 
-  private object DisplayTypeOption {
-    def parse(optionName: String, value: String): String = {
-      val trimmed = value.trim
-      if trimmed.nonEmpty && !trimmed.contains('\n') && !trimmed.contains('\r') then trimmed
-      else throw new IllegalArgumentException(s"Invalid $PluginName $optionName: $value")
+  private def compileRegex(optionName: String, value: String): Pattern =
+    Try(Pattern.compile(value)).getOrElse {
+      throw new IllegalArgumentException(s"Invalid $PluginName $optionName: $value")
     }
+
+  private def parseSingleLineOption(optionName: String, value: String): String = {
+    val trimmed = value.trim
+    if trimmed.nonEmpty && !trimmed.contains('\n') && !trimmed.contains('\r') then trimmed
+    else throw new IllegalArgumentException(s"Invalid $PluginName $optionName: $value")
+  }
+
+  private def parseEffectMarker(optionName: String, value: String): String = {
+    val marker = parseSingleLineOption(optionName, value)
+    if !marker.contains("--") then marker
+    else throw new IllegalArgumentException(s"Invalid $PluginName $optionName: $value")
   }
 
   private def validateMethodRegexRewrite(rewrite: String, step: MethodRegexStep): Unit =
@@ -700,11 +707,11 @@ object InferredReturnCommentPlugin {
             case Nil => List("Nothing")
             case values => values
 
-        Seq(EffectManagedStart, "Errors:") ++
+        Seq(config.effectSettings.startDelimiter, "Errors:") ++
           errors.map(value => s"  - $value") ++
           Seq("", "Returns:") ++
           results.map(value => s"  - $value") ++
-          Seq(EffectManagedEnd)
+          Seq(config.effectSettings.endDelimiter)
       }
 
     private def effectTypeArguments(tpe: Type)(using Context): Option[(Type, Type)] = {
@@ -811,8 +818,10 @@ object InferredReturnCommentPlugin {
         newline: String
     ): String = {
       val lines = ArrayBuffer.from(raw.split(Pattern.quote(newline), -1).toSeq)
-      val start = lines.indexWhere(containsEffectManagedStart)
-      val end = lines.indexWhere(containsEffectManagedEnd)
+      val startMarker = config.effectSettings.startDelimiter
+      val endMarker = config.effectSettings.endDelimiter
+      val start = lines.indexWhere(_.contains(startMarker))
+      val end = if start >= 0 then lines.indexWhere(_.contains(endMarker), start + 1) else -1
       val linePrefix = preferredBlockLinePrefix(lines.toSeq, commentIndent)
       val managedRawLines = managedLines.map {
         case "" => linePrefix.stripSuffix(" ")
@@ -821,7 +830,7 @@ object InferredReturnCommentPlugin {
 
       val insertAt =
         if start >= 0 && end >= start then {
-          val markerOffset = effectManagedStartMarker(lines(start)).map(lines(start).indexOf).getOrElse(0)
+          val markerOffset = lines(start).indexOf(startMarker)
           val markerIsOnOpener = lines(start).take(markerOffset).trim.endsWith("/**")
           if markerIsOnOpener then {
             lines(start) = lines(start).take(markerOffset).stripTrailing()
@@ -851,15 +860,6 @@ object InferredReturnCommentPlugin {
       lines.insertAll(insertAt, block)
       lines.mkString(newline)
     }
-
-    private def containsEffectManagedStart(line: String): Boolean =
-      effectManagedStartMarker(line).nonEmpty
-
-    private def containsEffectManagedEnd(line: String): Boolean =
-      line.contains(EffectManagedEnd) || line.contains(LegacyEffectManagedEnd)
-
-    private def effectManagedStartMarker(line: String): Option[String] =
-      Seq(EffectManagedStart, LegacyEffectManagedStart).find(line.contains)
 
     private def updateExistingBlockComment(comment: Comment, text: String, managedLines: Seq[String], sourceNewline: String): String =
       val raw = comment.raw
