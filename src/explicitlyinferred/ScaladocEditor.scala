@@ -4,7 +4,7 @@ import java.util.regex.Pattern
 import scala.collection.mutable.ArrayBuffer
 
 private[explicitlyinferred] object ScaladocEditor {
-  def create(indent: String, documentation: EffectDocumentation, markers: Markers, newline: String): String = {
+  def create(indent: String, documentation: TypeDocumentation, markers: Markers, newline: String): String = {
     val body = documentation.managedLines(markers).map {
       case "" => s"$indent *"
       case line => s"$indent * $line"
@@ -15,7 +15,7 @@ private[explicitlyinferred] object ScaladocEditor {
   def update(
       rawComment: String,
       indent: String,
-      documentation: EffectDocumentation,
+      documentation: TypeDocumentation,
       markers: Markers,
       sourceNewline: String
   ): String = {

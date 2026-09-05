@@ -1,6 +1,6 @@
 # explicitly-inferred
 
-`explicitly-inferred` is a Scala 3 compiler plugin that writes inferred effect errors and results into managed Scaladoc regions during `-rewrite`.
+`explicitly-inferred` is a Scala 3 compiler plugin that writes selected inferred type arguments into managed Scaladoc regions during `-rewrite`.
 
 ## Installation
 
@@ -33,24 +33,25 @@ The plugin rewrites source files in place, so compilation must include `-rewrite
 ```text
 -Xplugin:/path/to/explicitly-inferred.jar
 -rewrite
--P:explicitlyInferred:effectTypeRegex=zio\.prelude\.fx\.ZPure
+-P:explicitlyInferred:typeParam=L:Left:dealias
+-P:explicitlyInferred:typeParam=R:Right:preserve
 ```
 
 ## Usage
 
-`effectTypeRegex` is required and matches the full name of the inferred effect constructor. The plugin reads error and result arguments by type-parameter name, then creates or updates a managed Scaladoc region.
+Each `typeParam` selects a formal type-parameter name, assigns its Scaladoc heading, and chooses whether aliases are preserved or expanded. Mappings are repeatable and rendered in option order.
 
 ```text
--P:explicitlyInferred:effectTypeRegex=zio\.prelude\.fx\.ZPure
--P:explicitlyInferred:errorTypeParam=E
--P:explicitlyInferred:resultTypeParam=A
+-P:explicitlyInferred:typeParam=L:Left:dealias
+-P:explicitlyInferred:typeParam=R:Right:preserve
+-P:explicitlyInferred:typeRegex=example\.Container
 -P:explicitlyInferred:typeNameStyle=owner
 ```
 
 Before:
 
 ```scala
-def create = null.asInstanceOf[ZPure[Any, Nothing, Foo | Bar, Unit]]
+def create = null.asInstanceOf[Container[Any, Foo | Bar, Unit]]
 ```
 
 After:
@@ -58,15 +59,15 @@ After:
 ```scala
 /**
   * <!-- types -->
-  * Errors:
+  * Left:
   *   - Bar
   *   - Foo
   *
-  * Returns:
+  * Right:
   *   - Unit
   * <!-- /types -->
   */
-def create = null.asInstanceOf[ZPure[Any, Nothing, Foo | Bar, Unit]]
+def create = null.asInstanceOf[Container[Any, Foo | Bar, Unit]]
 ```
 
 Existing prose and Scaladoc tags outside the managed region are preserved. Union members are normalized, deduplicated, and sorted.
@@ -75,14 +76,13 @@ Existing prose and Scaladoc tags outside the managed region are preserved. Union
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `effectTypeRegex=<java-regex>` | required | Matches the full effect constructor name. |
+| `typeParam=<name>:<heading>:preserve\|dealias` | required | Selects and labels a formal type parameter. Repeatable. |
+| `typeRegex=<java-regex>` | none | Restricts the full name of the outer parameterized type. |
+| `additionalType=<name>:<display-name>` | none | Adds an entry to the named parameter's section. Repeatable. |
+| `excludeTypeRegex=<name>:<java-regex>` | none | Removes matching entries from the named parameter's section. Repeatable. |
 | `methodRegex=<java-regex>` | `.*` | Matches the full simple method name. Repeatable as a pipeline. |
 | `methodRegexRewrite=<java-replacement>` | none | Rewrites the preceding capturing regex match before the next method stage. |
 | `scope=members\|all\|nonPrivate` | `members` | Selects members, all defs including locals, or non-private members. |
-| `errorTypeParam=<name>` | `E` | Names the effect type parameter containing errors. |
-| `resultTypeParam=<name>` | `A` | Names the effect type parameter containing the result. |
-| `additionalErrorType=<display-name>` | none | Adds an error entry. Repeatable. |
-| `excludeErrorTypeRegex=<java-regex>` | none | Removes matching inferred errors. Repeatable. |
 | `typeNameStyle=simple\|owner\|full` | `simple` | Controls qualification of rendered type names. |
 | `startMarker=<text>` | `types` | Sets the opening managed-region marker body. |
 | `endMarker=<text>` | `/types` | Sets the closing managed-region marker body. |
@@ -90,9 +90,34 @@ Existing prose and Scaladoc tags outside the managed region are preserved. Union
 Marker values are safe single-line HTML-comment bodies. The default values render as `<!-- types -->` and `<!-- /types -->`:
 
 ```text
--P:explicitlyInferred:startMarker=effect-types
--P:explicitlyInferred:endMarker=/effect-types
+-P:explicitlyInferred:startMarker=inferred-types
+-P:explicitlyInferred:endMarker=/inferred-types
 ```
+
+### Parameter Mappings
+
+The compact mapping syntax is `<formal-name>:<heading>:<alias-policy>`. The plugin appends `:` to the heading in Scaladoc. `preserve` keeps source-facing aliases, while `dealias` expands aliases before rendering union members.
+
+Without `typeRegex`, any outer parameterized inferred return type is eligible. A candidate is skipped unless its constructor contains every configured formal parameter. Nested constructors are not searched.
+
+Mappings and their headings must be unique. Additional values and exclusion patterns target a configured formal parameter and may appear before or after its mapping:
+
+```text
+-P:explicitlyInferred:additionalType=L:Fallback
+-P:explicitlyInferred:excludeTypeRegex=L:.*Internal
+```
+
+Exclusion patterns are tested against both the rendered name and full type name. If filtering leaves a section empty, it contains `Nothing`.
+
+Versions before `0.1.0-M8` used effect-specific options. Replace them as follows; the old names are rejected:
+
+| Before M8 | M8 and later |
+| --- | --- |
+| `effectTypeRegex=<regex>` | `typeRegex=<regex>` |
+| `errorTypeParam=E` | `typeParam=E:Errors:dealias` |
+| `resultTypeParam=A` | `typeParam=A:Returns:preserve` |
+| `additionalErrorType=<value>` | `additionalType=E:<value>` |
+| `excludeErrorTypeRegex=<regex>` | `excludeTypeRegex=E:<regex>` |
 
 ### Method Pipeline
 
@@ -111,27 +136,18 @@ Rules:
 - Numbered references such as `$1` are validated during option parsing.
 - Named references such as `${name}` are validated when a matching stage applies them.
 
-### Error Filtering
-
-Additional public errors and excluded implementation errors can be configured independently:
-
-```text
--P:explicitlyInferred:additionalErrorType=UnexpectedError
--P:explicitlyInferred:excludeErrorTypeRegex=.*ShortCircuit
-```
-
-Exclusion patterns are tested against both the rendered name and full type name.
-
 ### Behavior
 
 - Only defs with inferred return types are considered.
+- Only the outer inferred return-type constructor is inspected.
+- Every configured type-parameter mapping must resolve on that constructor.
 - Synthetic defs are skipped.
 - `scope=members` excludes local defs; `scope=all` includes them.
 - Existing managed regions are replaced in place, making repeated rewrites idempotent.
 - Attached block comments are converted to Scaladoc while preserving existing content.
 - Comments are inserted above annotations, including multiline annotations.
 
-If no documentation is written, verify that `-rewrite` is enabled, `effectTypeRegex` matches the full constructor name, E/A parameter names are correct, and the method passes the method and scope filters.
+If no documentation is written, verify that `-rewrite` is enabled, every `typeParam` name exists on the outer constructor, any `typeRegex` matches its full name, and the method passes the method and scope filters.
 
 ## Development
 
@@ -159,9 +175,9 @@ The manual benchmark compares median Scala compiler process time with and withou
 
 The scenarios isolate different plugin costs:
 
-- `many-methods` processes 1,000 inferred effect methods.
+- `many-methods` processes 1,000 inferred parameterized methods.
 - `many-comments` adds an existing Scaladoc comment to every method.
-- `large-union` renders a balanced 256-member error union for 100 methods.
+- `large-union` renders a balanced 256-member union for 100 methods.
 - `early-mismatch` rejects 5,000 methods at the first stage of an eight-stage method pipeline.
 
 For a quicker targeted run, select one scenario and reduce the iteration counts:

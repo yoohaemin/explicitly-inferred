@@ -60,7 +60,8 @@ object PluginBenchmark {
       if withPlugin then
         List(
           s"-Xplugin:$pluginPath",
-          "-P:explicitlyInferred:effectTypeRegex=.*Effect"
+          "-P:explicitlyInferred:typeParam=L:Left:dealias",
+          "-P:explicitlyInferred:typeParam=R:Right:preserve"
         ) ++ scenario.pluginOptions.map("-P:explicitlyInferred:" + _)
       else Nil
     val command = Seq(
@@ -124,25 +125,25 @@ object PluginBenchmark {
   private def manyMethods(count: Int, withComments: Boolean): String = {
     val methods = (0 until count).map { index =>
       val comment = if withComments then s"  /** Existing documentation $index. */\n" else ""
-      s"${comment}  def method$index = null.asInstanceOf[Effect[Any, Nothing, Int]]"
+      s"${comment}  def method$index = null.asInstanceOf[Container[Any, Nothing, Int]]"
     }.mkString("\n")
     s"""object Benchmark {
-       |  final class Effect[R, E, A]
+       |  final class Container[C, L, R]
        |$methods
        |}
        |""".stripMargin
   }
 
   private def largeUnion(memberCount: Int, methodCount: Int): String = {
-    val types = (0 until memberCount).map(index => s"  final class Error$index").mkString("\n")
-    val union = balancedUnion((0 until memberCount).map(index => s"Error$index"))
+    val types = (0 until memberCount).map(index => s"  final class Member$index").mkString("\n")
+    val union = balancedUnion((0 until memberCount).map(index => s"Member$index"))
     val methods = (0 until methodCount)
-      .map(index => s"  def method$index = null.asInstanceOf[Effect[Any, Errors, Int]]")
+      .map(index => s"  def method$index = null.asInstanceOf[Container[Any, Members, Int]]")
       .mkString("\n")
     s"""object Benchmark {
-       |  final class Effect[R, E, A]
+       |  final class Container[C, L, R]
        |$types
-       |  type Errors = $union
+       |  type Members = $union
        |$methods
        |}
        |""".stripMargin

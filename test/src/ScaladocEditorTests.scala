@@ -3,7 +3,10 @@ package explicitlyinferred
 import utest.*
 
 object ScaladocEditorTests extends TestSuite {
-  private val documentation = EffectDocumentation(List("Alpha", "Zebra"), List("Result"))
+  private val documentation = TypeDocumentation(List(
+    DocumentationSection("Left", List("Alpha", "Zebra")),
+    DocumentationSection("Right", List("Value"))
+  ))
   private val markers = Markers("types", "/types")
 
   val tests = Tests {
@@ -11,12 +14,12 @@ object ScaladocEditorTests extends TestSuite {
       val expected =
         """  /**
           |   * <!-- types -->
-          |   * Errors:
+          |   * Left:
           |   *   - Alpha
           |   *   - Zebra
           |   *
-          |   * Returns:
-          |   *   - Result
+          |   * Right:
+          |   *   - Value
           |   * <!-- /types -->
           |   */
           |""".stripMargin
@@ -28,7 +31,7 @@ object ScaladocEditorTests extends TestSuite {
       val input =
         """/** Existing documentation.
           | * <!-- types -->
-          | * Errors:
+          | * Left:
           | *   - Stale
           | * <!-- /types -->
           | * @param value existing tag
@@ -45,18 +48,18 @@ object ScaladocEditorTests extends TestSuite {
     }
 
     test("updates inline custom markers") {
-      val custom = Markers("effect-types", "/effect-types")
+      val custom = Markers("inferred-types", "/inferred-types")
       val input =
-        """/** <!-- effect-types -->
-          |  * Errors:
+        """/** <!-- inferred-types -->
+          |  * Left:
           |  *   - Stale
-          |  * <!-- /effect-types -->
+          |  * <!-- /inferred-types -->
           |  */""".stripMargin
 
       val output = ScaladocEditor.update(input, "", documentation, custom, "\n")
 
-      assert(output.split("<!-- effect-types -->", -1).length == 2)
-      assert(output.split("<!-- /effect-types -->", -1).length == 2)
+      assert(output.split("<!-- inferred-types -->", -1).length == 2)
+      assert(output.split("<!-- /inferred-types -->", -1).length == 2)
       assert(!output.contains("Stale"))
     }
 

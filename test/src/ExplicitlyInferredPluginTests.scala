@@ -9,12 +9,12 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("preserves prose and tags in attached Scaladoc") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
+          |  final class Container[C, L, R]
           |
           |  /** Existing documentation.
           |   * @param input existing tag
           |   */
-          |  def value(input: Int) = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |  def value(input: Int) = null.asInstanceOf[Container[Any, Nothing, Int]]
           |}
           |""".stripMargin
 
@@ -28,15 +28,15 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("finds attached block comments throughout a compilation unit") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
+          |  final class Container[C, L, R]
           |  /** first */
-          |  def first = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |  def first = null.asInstanceOf[Container[Any, Nothing, Int]]
           |
           |  /** middle */
-          |  def middle = null.asInstanceOf[Effect[Any, Nothing, String]]
+          |  def middle = null.asInstanceOf[Container[Any, Nothing, String]]
           |
           |  /** last */
-          |  def last = null.asInstanceOf[Effect[Any, Nothing, Long]]
+          |  def last = null.asInstanceOf[Container[Any, Nothing, Long]]
           |}
           |""".stripMargin
 
@@ -51,10 +51,10 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("does not attach an older block comment past a nearer line comment") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
+          |  final class Container[C, L, R]
           |  /** old block */
           |  // nearest comment
-          |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |  def value = null.asInstanceOf[Container[Any, Nothing, Int]]
           |}
           |""".stripMargin
 
@@ -68,12 +68,12 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("inserts above multiline annotations") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
+          |  final class Container[C, L, R]
           |  @deprecated(
           |    "old",
           |    "1.0"
           |  )
-          |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |  def value = null.asInstanceOf[Container[Any, Nothing, Int]]
           |}
           |""".stripMargin
 
@@ -86,9 +86,9 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("applies method matching and rewrites") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
-          |  def `prefix.keep` = null.asInstanceOf[Effect[Any, Nothing, Int]]
-          |  def `prefix.skip` = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |  final class Container[C, L, R]
+          |  def `prefix.keep` = null.asInstanceOf[Container[Any, Nothing, Int]]
+          |  def `prefix.skip` = null.asInstanceOf[Container[Any, Nothing, Int]]
           |}
           |""".stripMargin
       val options = Seq(
@@ -105,9 +105,9 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("scope controls local methods") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
+          |  final class Container[C, L, R]
           |  def outer =
-          |    def inner = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |    def inner = null.asInstanceOf[Container[Any, Nothing, Int]]
           |    inner
           |}
           |""".stripMargin
@@ -122,8 +122,8 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("leaves explicit return types untouched") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
-          |  def value: Effect[Any, Nothing, Int] = null
+          |  final class Container[C, L, R]
+          |  def value: Container[Any, Nothing, Int] = null
           |}
           |""".stripMargin
 
@@ -132,8 +132,8 @@ object ExplicitlyInferredPluginTests extends TestSuite {
 
     test("rewrites multiple source files") {
       val sources = Seq(
-        "One.scala" -> "object One { final class Effect[R, E, A]; def one = null.asInstanceOf[Effect[Any, Nothing, Int]] }\n",
-        "Two.scala" -> "object Two { final class Effect[R, E, A]; def two = null.asInstanceOf[Effect[Any, String, Int]] }\n"
+        "One.scala" -> "object One { final class Container[C, L, R]; def one = null.asInstanceOf[Container[Any, Nothing, Int]] }\n",
+        "Two.scala" -> "object Two { final class Container[C, L, R]; def two = null.asInstanceOf[Container[Any, String, Int]] }\n"
       )
 
       val output = rewriteFiles(sources)
@@ -144,8 +144,8 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("does not modify sources without -rewrite") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
-          |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |  final class Container[C, L, R]
+          |  def value = null.asInstanceOf[Container[Any, Nothing, Int]]
           |}
           |""".stripMargin
 
@@ -155,15 +155,30 @@ object ExplicitlyInferredPluginTests extends TestSuite {
     test("uses custom markers through the compiler options") {
       val input =
         """object Sample {
-          |  final class Effect[R, E, A]
-          |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
+          |  final class Container[C, L, R]
+          |  def value = null.asInstanceOf[Container[Any, Nothing, Int]]
           |}
           |""".stripMargin
 
-      val output = rewrite(input, extraOptions = Seq("startMarker=effect-types", "endMarker=/effect-types"))
+      val output = rewrite(input, extraOptions = Seq("startMarker=inferred-types", "endMarker=/inferred-types"))
 
-      assert(output.contains("<!-- effect-types -->"))
-      assert(output.contains("<!-- /effect-types -->"))
+      assert(output.contains("<!-- inferred-types -->"))
+      assert(output.contains("<!-- /inferred-types -->"))
+    }
+
+    test("rejects effect-specific options through the compiler") {
+      val input =
+        """object Sample {
+          |  final class Container[C, L, R]
+          |  def value = null.asInstanceOf[Container[Any, Nothing, Int]]
+          |}
+          |""".stripMargin
+
+      val result = rewriteExpectFailure(input, extraOptions = Seq("effectTypeRegex=.*"))
+      val diagnostics = result.out + result.err
+
+      assert(diagnostics.contains("Unknown explicitlyInferred option"))
+      assert(diagnostics.contains("effectTypeRegex"))
     }
   }
 }

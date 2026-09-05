@@ -5,51 +5,69 @@ import utest.*
 object PluginConfigTests extends TestSuite {
   import CompilerPluginTestSupport.expectIllegalArgument
 
-  val tests = Tests {
-    test("parses effect defaults") {
-      val config = PluginConfig.parse(List("effectTypeRegex=.*Effect"))
+  private val required = "typeParam=L:Left:dealias"
 
-      assert(config.effect.effectTypeRegex.pattern() == ".*Effect")
+  val tests = Tests {
+    test("parses neutral defaults") {
+      val config = PluginConfig.parse(List(required))
+      val parameter = config.documentation.parameters.head
+
+      assert(config.documentation.typeRegex.isEmpty)
       assert(config.scope == Scope.Members)
-      assert(config.effect.errorTypeParam == "E")
-      assert(config.effect.resultTypeParam == "A")
-      assert(config.effect.typeNameStyle == TypeNameStyle.Simple)
-      assert(config.effect.markers == Markers("types", "/types"))
+      assert(parameter.name == "L")
+      assert(parameter.heading == "Left")
+      assert(parameter.aliasPolicy == AliasPolicy.Dealias)
+      assert(parameter.additionalTypes.isEmpty)
+      assert(parameter.excludedTypes.isEmpty)
+      assert(config.documentation.typeNameStyle == TypeNameStyle.Simple)
+      assert(config.documentation.markers == Markers("types", "/types"))
       assert(config.methodMatcher.matches("anything"))
     }
 
-    test("requires effectTypeRegex") {
+    test("requires a type parameter mapping") {
       val error = expectIllegalArgument(PluginConfig.parse(Nil))
-      assert(error.getMessage.contains("effectTypeRegex"))
+      assert(error.getMessage.contains("typeParam"))
     }
 
-    test("parses repeatable and last-wins options") {
+    test("parses ordered mappings and targeted controls") {
       val config = PluginConfig.parse(List(
-        "effectTypeRegex=First",
-        "effectTypeRegex=Second",
+        "additionalType=L:Fallback:Value",
+        "excludeTypeRegex=R:Internal:.*",
+        "typeRegex=First",
+        "typeRegex=Second",
         "scope=all",
-        "errorTypeParam=Failure",
-        "resultTypeParam=Success",
-        "additionalErrorType=One",
-        "additionalErrorType=Two",
-        "excludeErrorTypeRegex=Internal.*",
-        "excludeErrorTypeRegex=Hidden.*",
+        "typeParam=L:Left: side:dealias",
+        "typeParam=R:Right:preserve",
         "typeNameStyle=full",
-        "startMarker=effect-types",
-        "endMarker=/effect-types"
+        "startMarker=inferred-types",
+        "endMarker=/inferred-types"
       ))
 
-      assert(config.effect.effectTypeRegex.pattern() == "Second")
+      assert(config.documentation.typeRegex.map(_.pattern()).contains("Second"))
       assert(config.scope == Scope.All)
-      assert(config.effect.errorTypeParam == "Failure")
-      assert(config.effect.resultTypeParam == "Success")
-      assert(config.effect.additionalErrorTypes == List("One", "Two"))
-      assert(config.effect.excludedErrorTypes.map(_.pattern()) == List("Internal.*", "Hidden.*"))
-      assert(config.effect.typeNameStyle == TypeNameStyle.Full)
-      assert(config.effect.markers == Markers("effect-types", "/effect-types"))
+      assert(config.documentation.parameters.map(_.name) == List("L", "R"))
+      assert(config.documentation.parameters.map(_.heading) == List("Left: side", "Right"))
+      assert(config.documentation.parameters.map(_.aliasPolicy) == List(AliasPolicy.Dealias, AliasPolicy.Preserve))
+      assert(config.documentation.parameters.head.additionalTypes == List("Fallback:Value"))
+      assert(config.documentation.parameters(1).excludedTypes.map(_.pattern()) == List("Internal:.*"))
+      assert(config.documentation.typeNameStyle == TypeNameStyle.Full)
+      assert(config.documentation.markers == Markers("inferred-types", "/inferred-types"))
     }
 
-    test("rejects removed return-comment options") {
+    test("rejects effect-specific options") {
+      Seq(
+        "effectTypeRegex=.*Effect",
+        "errorTypeParam=E",
+        "resultTypeParam=A",
+        "additionalErrorType=Unexpected",
+        "excludeErrorTypeRegex=.*Internal"
+      ).foreach { option =>
+        val error = expectIllegalArgument(PluginConfig.parse(List(required, option)))
+        assert(error.getMessage.contains("Unknown explicitlyInferred option"))
+      }
+    }
+
+    test("rejects removed legacy options") {
       Seq(
         "mode=effectScaladoc",
         "maxTypeLength=80",
@@ -59,35 +77,45 @@ object PluginConfigTests extends TestSuite {
         "effectStartMarker=types",
         "effectEndMarker=/types"
       ).foreach { option =>
-        val error = expectIllegalArgument(
-          PluginConfig.parse(List("effectTypeRegex=.*Effect", option))
-        )
+        val error = expectIllegalArgument(PluginConfig.parse(List(required, option)))
         assert(error.getMessage.contains("Unknown explicitlyInferred option"))
       }
     }
 
-    test("rejects invalid scalar options") {
+    test("rejects malformed scalar and mapping options") {
       Seq(
-        "effectTypeRegex=(",
+        "typeRegex=(",
         "scope=package",
-        "errorTypeParam=not valid",
-        "resultTypeParam=",
-        "additionalErrorType=",
-        "excludeErrorTypeRegex=(",
+        "typeParam=missing-separators",
+        "typeParam=L::preserve",
+        "typeParam=not valid:Label:preserve",
+        "typeParam=L:Label:unknown",
+        "typeParam=L:Label::preserve",
+        "additionalType=L:",
+        "additionalType=missing-target",
+        "excludeTypeRegex=missing-target",
+        "excludeTypeRegex=L:(",
         "typeNameStyle=qualified",
         "startMarker=",
         "endMarker=line1\nline2",
         "startMarker=bad--marker"
       ).foreach { option =>
-        expectIllegalArgument(
-          PluginConfig.parse(List("effectTypeRegex=.*Effect", option))
-        )
+        expectIllegalArgument(PluginConfig.parse(List(required, option)))
       }
+    }
+
+    test("rejects duplicate mappings and unknown targets") {
+      Seq(
+        List(required, "typeParam=L:Other:preserve"),
+        List(required, "typeParam=R:Left:preserve"),
+        List(required, "additionalType=R:Value"),
+        List(required, "excludeTypeRegex=R:.*")
+      ).foreach(options => expectIllegalArgument(PluginConfig.parse(options)))
     }
 
     test("rejects equal markers") {
       val error = expectIllegalArgument(
-        PluginConfig.parse(List("effectTypeRegex=.*Effect", "startMarker=same", "endMarker=same"))
+        PluginConfig.parse(List(required, "startMarker=same", "endMarker=same"))
       )
       assert(error.getMessage.contains("markers must be different"))
     }

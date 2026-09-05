@@ -7,6 +7,7 @@ import dotty.tools.dotc.core.Contexts.Context
 import dotty.tools.dotc.core.Flags
 import dotty.tools.dotc.core.Symbols.{NoSymbol, Symbol}
 import dotty.tools.dotc.plugins.{PluginPhase, StandardPlugin}
+import dotty.tools.dotc.report
 import dotty.tools.dotc.rewrites.Rewrites
 import dotty.tools.dotc.transform.Pickler
 import dotty.tools.dotc.typer.TyperPhase
@@ -20,14 +21,18 @@ final class ExplicitlyInferredPlugin extends StandardPlugin {
   override val optionsHelp = Some(PluginConfig.OptionsHelp)
 
   override def initialize(options: List[String])(using Context): List[PluginPhase] =
-    new ExplicitlyInferredPhase(PluginConfig.parse(options)) :: Nil
+    try new ExplicitlyInferredPhase(PluginConfig.parse(options)) :: Nil
+    catch
+      case error: IllegalArgumentException =>
+        report.error(error.getMessage)
+        Nil
 }
 
 private final class ExplicitlyInferredPhase(config: PluginConfig) extends PluginPhase {
   import tpd.*
 
   private val unitStates = mutable.HashMap.empty[CompilationUnit, UnitState]
-  private val documentationBuilder = new EffectDocumentationBuilder(config.effect)
+  private val documentationBuilder = new TypeDocumentationBuilder(config.documentation)
 
   override val phaseName = "explicitlyInferredPhase"
   override val runsAfter = Set(TyperPhase.name)
@@ -56,14 +61,14 @@ private final class ExplicitlyInferredPhase(config: PluginConfig) extends Plugin
                 comment.raw,
                 SourceLayout.commentIndentation(state.text, comment.span.start),
                 documentation,
-                config.effect.markers,
+                config.documentation.markers,
                 layout.newline
               )
             )
           case None =>
             patch(
               Span(layout.insertionOffset),
-              ScaladocEditor.create(layout.indentation, documentation, config.effect.markers, layout.newline)
+              ScaladocEditor.create(layout.indentation, documentation, config.documentation.markers, layout.newline)
             )
       }
 

@@ -6,31 +6,49 @@ import java.nio.file.Paths
 
 object CompilerPluginTestSupport {
   private val PluginPrefix = "-P:explicitlyInferred:"
-  private val DefaultEffectRegex = ".*Effect"
+  private val DefaultTypeParameters = Seq(
+    "typeParam=L:Left:dealias",
+    "typeParam=R:Right:preserve"
+  )
   private val DefaultSyntaxOptions = Seq("-no-indent", "-old-syntax")
 
   def rewrite(
       source: String,
       extraOptions: Seq[String] = Seq.empty,
-      methodRegex: String = ".*"
+      methodRegex: String = ".*",
+      typeParameters: Seq[String] = DefaultTypeParameters
   ): String =
-    rewriteFiles(Seq("Sample.scala" -> source), extraOptions, methodRegex)("Sample.scala")
+    rewriteFiles(Seq("Sample.scala" -> source), extraOptions, methodRegex, typeParameters)("Sample.scala")
 
-  def rewriteRaw(source: String, extraOptions: Seq[String] = Seq.empty): String =
-    compile(Seq("Sample.scala" -> source), extraOptions = extraOptions).files("Sample.scala")
+  def rewriteRaw(
+      source: String,
+      extraOptions: Seq[String] = Seq.empty,
+      typeParameters: Seq[String] = DefaultTypeParameters
+  ): String =
+    compile(Seq("Sample.scala" -> source), extraOptions = extraOptions, typeParameters = typeParameters).files("Sample.scala")
 
   def rewriteFiles(
       sources: Seq[(String, String)],
       extraOptions: Seq[String] = Seq.empty,
-      methodRegex: String = ".*"
+      methodRegex: String = ".*",
+      typeParameters: Seq[String] = DefaultTypeParameters
   ): Map[String, String] = {
-    val result = compile(sources, extraOptions = extraOptions, methodRegex = methodRegex)
+    val result = compile(sources, extraOptions = extraOptions, methodRegex = methodRegex, typeParameters = typeParameters)
     if result.exitCode != 0 then throw new AssertionError(result.out + "\n" + result.err)
     result.files.view.mapValues(normalize).toMap
   }
 
-  def compileWithoutRewrite(source: String, extraOptions: Seq[String] = Seq.empty): String = {
-    val result = compile(Seq("Sample.scala" -> source), extraOptions = extraOptions, includeRewrite = false)
+  def compileWithoutRewrite(
+      source: String,
+      extraOptions: Seq[String] = Seq.empty,
+      typeParameters: Seq[String] = DefaultTypeParameters
+  ): String = {
+    val result = compile(
+      Seq("Sample.scala" -> source),
+      extraOptions = extraOptions,
+      includeRewrite = false,
+      typeParameters = typeParameters
+    )
     if result.exitCode != 0 then throw new AssertionError(result.out + "\n" + result.err)
     result.files("Sample.scala")
   }
@@ -38,12 +56,12 @@ object CompilerPluginTestSupport {
   def rewriteExpectFailure(
       source: String,
       extraOptions: Seq[String] = Seq.empty,
-      includeDefaultEffectRegex: Boolean = true
+      typeParameters: Seq[String] = DefaultTypeParameters
   ): CompileResult = {
     val result = compile(
       Seq("Sample.scala" -> source),
       extraOptions = extraOptions,
-      includeDefaultEffectRegex = includeDefaultEffectRegex
+      typeParameters = typeParameters
     )
     assert(result.exitCode != 0)
     assert(result.files("Sample.scala") == source)
@@ -55,7 +73,7 @@ object CompilerPluginTestSupport {
       extraOptions: Seq[String] = Seq.empty,
       methodRegex: String = ".*",
       includeRewrite: Boolean = true,
-      includeDefaultEffectRegex: Boolean = true
+      typeParameters: Seq[String] = DefaultTypeParameters
   ): CompileResult = {
     val workspace = os.temp.dir(prefix = "explicitly-inferred-test")
     val outputDirectory = workspace / "out"
@@ -66,7 +84,7 @@ object CompilerPluginTestSupport {
 
     val pluginOptions =
       Seq(s"${PluginPrefix}methodRegex=$methodRegex") ++
-        (if includeDefaultEffectRegex then Seq(s"${PluginPrefix}effectTypeRegex=$DefaultEffectRegex") else Seq.empty) ++
+        typeParameters.map(PluginPrefix + _) ++
         extraOptions.map(PluginPrefix + _)
     val arguments =
       Seq("java", "-cp", sys.props("java.class.path"), "dotty.tools.dotc.Main") ++
@@ -81,7 +99,7 @@ object CompilerPluginTestSupport {
         pluginOptions ++
         sources.map { (name, _) => (workspace / name).toString }
 
-    val process = os.proc(arguments).call(cwd = workspace, check = false)
+    val process = os.proc(arguments).call(cwd = workspace, check = false, stdout = os.Pipe, stderr = os.Pipe)
     val files = sources.map { (name, _) =>
       name -> new String(os.read.bytes(workspace / name), StandardCharsets.UTF_8)
     }.toMap
