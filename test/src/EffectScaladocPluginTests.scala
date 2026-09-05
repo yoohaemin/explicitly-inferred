@@ -32,14 +32,14 @@ object EffectScaladocPluginTests extends TestSuite {
            |  }
            |
            |  /**
-           |   * <!-- explicitly-inferred:start -->
+           |   * <!-- types -->
            |   * Errors:
            |   *   - Errors.Alpha
            |   *   - Errors.Zebra
            |   *
            |   * Returns:
            |   *   - Option[String]
-           |   * <!-- explicitly-inferred:end -->
+           |   * <!-- /types -->
            |   */
            |  def value = null.asInstanceOf[Effect[Any, Errors.Zebra | Errors.Alpha, Option[String]]]
            |}
@@ -88,7 +88,7 @@ object EffectScaladocPluginTests extends TestSuite {
 
       assert(output.contains("Existing documentation."))
       assert(output.contains("@param input existing tag"))
-      assert(output.indexOf("explicitly-inferred:end") < output.indexOf("@param input"))
+      assert(output.indexOf("<!-- /types -->") < output.indexOf("@param input"))
       assert(output.contains("*   - Nothing"))
       assert(output.contains("*   - Int"))
     }
@@ -133,7 +133,7 @@ object EffectScaladocPluginTests extends TestSuite {
         s"""object Sample {
            |  final class Effect[R, E, A]
            |
-           |  /** <!-- explicitly-inferred:start -->
+           |  /** <!-- types -->
            |    * Errors:
            |    *
            |    *   - `String`
@@ -141,7 +141,7 @@ object EffectScaladocPluginTests extends TestSuite {
            |    * Returns:
            |    *
            |    *   - `String`
-           |    * <!-- explicitly-inferred:end -->
+           |    * <!-- /types -->
            |    */
            |  def value = null.asInstanceOf[Effect[Any, Nothing, Int]]
            |}
@@ -149,7 +149,7 @@ object EffectScaladocPluginTests extends TestSuite {
 
       val output = rewrite(input, extraOptions = effectOptions)
 
-      assert(output.split("explicitly-inferred:start", -1).length == 2)
+      assert(output.split("<!-- types -->", -1).length == 2)
       assert(output.contains("*   - Nothing"))
       assert(output.contains("*   - Int"))
       assert(!output.contains("*   - String"))

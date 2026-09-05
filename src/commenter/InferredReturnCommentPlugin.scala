@@ -175,8 +175,8 @@ object InferredReturnCommentPlugin {
   private val PluginName = "inferredReturnComment"
   private val DefaultManagedTag = "@inferredReturnType"
   private val ManagedContinuationPrefix = "  "
-  private val EffectManagedStart = "<!-- explicitly-inferred:start -->"
-  private val EffectManagedEnd = "<!-- explicitly-inferred:end -->"
+  private val EffectManagedStart = "<!-- types -->"
+  private val EffectManagedEnd = "<!-- /types -->"
 
   private final case class Config(
       methodSteps: List[MethodRegexStep],

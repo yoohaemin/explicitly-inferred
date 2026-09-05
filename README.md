@@ -128,14 +128,14 @@ def create = null.asInstanceOf[Effect[Any, Foo | Bar, Unit]]
 After:
 
 ```scala
-/** <!-- explicitly-inferred:start -->
+/** <!-- types -->
   * Errors:
   *   - Bar
   *   - Foo
   *
   * Returns:
   *   - Unit
-  * <!-- explicitly-inferred:end -->
+  * <!-- /types -->
   */
 def create = null.asInstanceOf[Effect[Any, Foo | Bar, Unit]]
 ```
