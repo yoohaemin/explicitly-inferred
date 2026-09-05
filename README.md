@@ -1,28 +1,16 @@
 # explicitly-inferred
 
-`explicitly-inferred` is a Scala 3 compiler plugin that adds normalized inferred return-type comments during `-rewrite`.
+`explicitly-inferred` is a Scala 3 compiler plugin that writes inferred effect errors and results into managed Scaladoc regions during `-rewrite`.
 
-## Usage
+## Installation
 
-`explicitly-inferred` is a compiler plugin, so it is published once per exact Scala compiler version. The Maven coordinates look like:
-
-```text
-com.yoohaemin:explicitly-inferred_<scala-version>:<plugin-version>
-```
-
-For example, Scala `3.9.0` resolves:
+Compiler plugins are published for an exact Scala compiler version. This project currently supports Scala `3.9.0`:
 
 ```text
 com.yoohaemin:explicitly-inferred_3.9.0:<plugin-version>
 ```
 
-The plugin supports Scala compiler version:
-
-```text
-3.9.0
-```
-
-Use full-version cross publishing when you add it to your build.
+Use full-version cross publishing when adding the plugin to a build.
 
 Mill:
 
@@ -40,105 +28,36 @@ addCompilerPlugin(
 )
 ```
 
-The plugin rewrites source files in place, so you must compile with `-rewrite`. If you wire the
-plugin through a build tool as a compiler plugin dependency, the build tool provides the `-Xplugin`
-path and you only need to add the syntax flags appropriate for your sources, the plugin options,
-and `-rewrite`.
-
-The raw compiler flags look like this:
+The plugin rewrites source files in place, so compilation must include `-rewrite`. Build tools supply the `-Xplugin` path for compiler-plugin dependencies. Raw compiler usage looks like:
 
 ```text
 -Xplugin:/path/to/explicitly-inferred.jar
 -rewrite
+-P:explicitlyInferred:effectTypeRegex=zio\.prelude\.fx\.ZPure
 ```
 
-Add syntax options such as `-no-indent` or `-old-syntax` when the rewritten sources require them.
+## Usage
 
-When a `def` has no explicit return type and matches the configured filters, the plugin inserts or updates a managed block comment immediately above it.
-
-Before:
-
-```scala
-object Sample {
-  def value = 1
-}
-```
-
-After:
-
-```scala
-object Sample {
-  /*
-   * @inferredReturnType Int
-   */
-  def value = 1
-}
-```
-
-### Basic Flags
-
-Start with the defaults:
+`effectTypeRegex` is required and matches the full name of the inferred effect constructor. The plugin reads error and result arguments by type-parameter name, then creates or updates a managed Scaladoc region.
 
 ```text
--P:inferredReturnComment:methodRegex=.*
--P:inferredReturnComment:managedTag=@inferredReturnType
-```
-
-That is usually enough to rewrite inferred member defs with the default managed tag.
-
-### Option Reference
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `methodRegex=<java-regex>` | `.*` | Matches the full simple method name. Repeat it to build a left-to-right name-matching pipeline. |
-| `methodRegexRewrite=<java-replacement>` | none | Rewrites the name matched by the immediately preceding capturing `methodRegex` before the next regex stage runs. |
-| `scope=members\|all\|nonPrivate` | `members` | Controls which defs are eligible: class/object members only, all defs including locals, or non-private members only. |
-| `maxTypeLength=<positive-int>` | `80` | Keeps the managed entry on one line when it fits; otherwise emits a managed multiline block. |
-| `managedTag=<single-line-text>` | `@inferredReturnType` | Changes the marker used for managed entries. |
-| `showTypeArgs=true\|false` | `true` | Shows or suppresses type arguments in rendered types. |
-| `showTypeParamNames=true\|false` | `true` | Shows type parameter labels such as `A = Int` instead of positional type arguments. |
-| `mode=returnComment\|effectScaladoc` | `returnComment` | Selects the legacy return comment or managed effect Scaladoc. |
-| `effectTypeRegex=<java-regex>` | `.*` | In effect mode, matches the full effect constructor name. |
-| `errorTypeParam=<name>` | `E` | Names the effect type parameter containing errors. |
-| `resultTypeParam=<name>` | `A` | Names the effect type parameter containing the result. |
-| `additionalErrorType=<display-name>` | none | Adds a public error entry. Repeatable. |
-| `excludeErrorTypeRegex=<java-regex>` | none | Removes matching internal errors. Repeatable. |
-| `typeNameStyle=simple\|owner\|full` | `simple` | Controls qualification of rendered type names. |
-| `effectStartMarker=<text>` | `types` | Sets the opening managed-region marker body in effect mode. |
-| `effectEndMarker=<text>` | `/types` | Sets the closing managed-region marker body in effect mode. |
-
-### Effect Scaladoc
-
-Effect mode documents the inferred error and result parameters of a matching effect type. Union
-members are dealiased, deduplicated, sorted, and emitted one per line inside a managed Scaladoc
-region. Existing prose and tags outside the region are preserved.
-
-Marker values are single-line HTML-comment bodies. For example, the defaults `types` and `/types`
-are rendered as `<!-- types -->` and `<!-- /types -->`. To use a custom pair:
-
-```text
--P:inferredReturnComment:effectStartMarker=effect-types
--P:inferredReturnComment:effectEndMarker=/effect-types
-```
-
-```text
--P:inferredReturnComment:mode=effectScaladoc
--P:inferredReturnComment:effectTypeRegex=zio\.prelude\.fx\.ZPure
--P:inferredReturnComment:errorTypeParam=E
--P:inferredReturnComment:resultTypeParam=A
--P:inferredReturnComment:typeNameStyle=owner
+-P:explicitlyInferred:effectTypeRegex=zio\.prelude\.fx\.ZPure
+-P:explicitlyInferred:errorTypeParam=E
+-P:explicitlyInferred:resultTypeParam=A
+-P:explicitlyInferred:typeNameStyle=owner
 ```
 
 Before:
 
 ```scala
-def create = null.asInstanceOf[Effect[Any, Foo | Bar, Unit]]
+def create = null.asInstanceOf[ZPure[Any, Nothing, Foo | Bar, Unit]]
 ```
 
 After:
 
 ```scala
-/** <!-- types -->
+/**
+  * <!-- types -->
   * Errors:
   *   - Bar
   *   - Foo
@@ -147,134 +66,84 @@ After:
   *   - Unit
   * <!-- /types -->
   */
-def create = null.asInstanceOf[Effect[Any, Foo | Bar, Unit]]
+def create = null.asInstanceOf[ZPure[Any, Nothing, Foo | Bar, Unit]]
 ```
 
-### Regex Pipeline
+Existing prose and Scaladoc tags outside the managed region are preserved. Union members are normalized, deduplicated, and sorted.
 
-`methodRegex` uses Java regex and matches the full simple def name, not a substring. If you want substring-like behavior, write that explicitly in the regex, for example `.*keep.*`.
+### Options
 
-`methodRegex` is repeatable and evaluated left to right. Each stage sees the current name. If a stage has a matching `methodRegexRewrite`, the rewritten name becomes the input to the next `methodRegex`.
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `effectTypeRegex=<java-regex>` | required | Matches the full effect constructor name. |
+| `methodRegex=<java-regex>` | `.*` | Matches the full simple method name. Repeatable as a pipeline. |
+| `methodRegexRewrite=<java-replacement>` | none | Rewrites the preceding capturing regex match before the next method stage. |
+| `scope=members\|all\|nonPrivate` | `members` | Selects members, all defs including locals, or non-private members. |
+| `errorTypeParam=<name>` | `E` | Names the effect type parameter containing errors. |
+| `resultTypeParam=<name>` | `A` | Names the effect type parameter containing the result. |
+| `additionalErrorType=<display-name>` | none | Adds an error entry. Repeatable. |
+| `excludeErrorTypeRegex=<java-regex>` | none | Removes matching inferred errors. Repeatable. |
+| `typeNameStyle=simple\|owner\|full` | `simple` | Controls qualification of rendered type names. |
+| `startMarker=<text>` | `types` | Sets the opening managed-region marker body. |
+| `endMarker=<text>` | `/types` | Sets the closing managed-region marker body. |
+
+Marker values are safe single-line HTML-comment bodies. The default values render as `<!-- types -->` and `<!-- /types -->`:
+
+```text
+-P:explicitlyInferred:startMarker=effect-types
+-P:explicitlyInferred:endMarker=/effect-types
+```
+
+### Method Pipeline
+
+`methodRegex` stages use Java regular expressions, match the entire current method name, and execute from left to right. An immediately following `methodRegexRewrite` uses Java replacement syntax and feeds its result into the next stage.
+
+```text
+-P:explicitlyInferred:methodRegex=prefix\.(?<name>.*)
+-P:explicitlyInferred:methodRegexRewrite=${name}
+-P:explicitlyInferred:methodRegex=create
+```
 
 Rules:
 
-- `methodRegexRewrite` must immediately follow a capturing `methodRegex`.
-- A rewrite is invalid after a regex with no capture groups.
-- A trailing rewrite with no next `methodRegex` stage is invalid.
-- Rewrites use Java replacement syntax, so both numbered (`$1`) and named (`${name}`) groups work.
-- Rewrites may also be literal text.
-- Invalid numbered references such as `$2` fail during option parsing.
-- Invalid named references such as `${missing}` fail when a matching rewrite stage applies them.
+- A rewrite must immediately follow a regex containing at least one capture group.
+- A rewrite must be followed by another regex stage.
+- Numbered references such as `$1` are validated during option parsing.
+- Named references such as `${name}` are validated when a matching stage applies them.
 
-Simple prefix stripping:
+### Error Filtering
 
-```text
--P:inferredReturnComment:methodRegex=prefix\.(keep)
--P:inferredReturnComment:methodRegexRewrite=$1
--P:inferredReturnComment:methodRegex=keep
-```
-
-Named capture groups:
+Additional public errors and excluded implementation errors can be configured independently:
 
 ```text
--P:inferredReturnComment:methodRegex=prefix\.(?<name>keep)
--P:inferredReturnComment:methodRegexRewrite=${name}
--P:inferredReturnComment:methodRegex=keep
+-P:explicitlyInferred:additionalErrorType=UnexpectedError
+-P:explicitlyInferred:excludeErrorTypeRegex=.*ShortCircuit
 ```
 
-Multiple rewrite stages:
+Exclusion patterns are tested against both the rendered name and full type name.
 
-```text
--P:inferredReturnComment:methodRegex=prefix\.(.*)
--P:inferredReturnComment:methodRegexRewrite=$1
--P:inferredReturnComment:methodRegex=(.*)\.(.*)
--P:inferredReturnComment:methodRegexRewrite=$2
--P:inferredReturnComment:methodRegex=keep
-```
+### Behavior
 
-Literal rewrites are also valid:
+- Only defs with inferred return types are considered.
+- Synthetic defs are skipped.
+- `scope=members` excludes local defs; `scope=all` includes them.
+- Existing managed regions are replaced in place, making repeated rewrites idempotent.
+- Attached block comments are converted to Scaladoc while preserving existing content.
+- Comments are inserted above annotations, including multiline annotations.
 
-```text
--P:inferredReturnComment:methodRegex=prefix\.(keep)
--P:inferredReturnComment:methodRegexRewrite=renamed
--P:inferredReturnComment:methodRegex=renamed
-```
-
-### Common Configurations
-
-Rewrite only methods named `keep`:
-
-```text
--P:inferredReturnComment:methodRegex=keep
-```
-
-Include local defs as well as members:
-
-```text
--P:inferredReturnComment:scope=all
-```
-
-Skip private members while keeping protected ones:
-
-```text
--P:inferredReturnComment:scope=nonPrivate
-```
-
-Use a custom managed tag:
-
-```text
--P:inferredReturnComment:managedTag=@explicitlyInferred
-```
-
-Force multiline output earlier:
-
-```text
--P:inferredReturnComment:maxTypeLength=20
-```
-
-Hide type parameter labels:
-
-```text
--P:inferredReturnComment:showTypeParamNames=false
-```
-
-Hide type arguments entirely:
-
-```text
--P:inferredReturnComment:showTypeArgs=false
-```
-
-### Behavior Notes
-
-- The plugin only touches defs with inferred return types. If a def already has `: Type`, it is left alone.
-- Managed comments are updated in place, so rerunning with the same settings is idempotent.
-- The plugin skips synthetic defs.
-- With the default `scope=members`, local defs are not rewritten.
-- If `managedTag` is customized, only entries with that tag are treated as managed on subsequent rewrites.
-
-### Troubleshooting
-
-If nothing changes, check these first:
-
-- `-rewrite` is present.
-- The def has no explicit return type.
-- The def name matches the full `methodRegex` pipeline.
-- The current `scope` includes that def.
-- A `methodRegexRewrite` is attached only to a capturing regex and is followed by another `methodRegex`.
-- Numbered replacement references such as `$2` are valid for the preceding regex.
-- Named replacement references such as `${missing}` are valid for any rewrite stage that actually matches.
+If no documentation is written, verify that `-rewrite` is enabled, `effectTypeRegex` matches the full constructor name, E/A parameter names are correct, and the method passes the method and scope filters.
 
 ## Development
 
-Run the test suite:
+Run the Scala 3.9.0 test suite:
 
 ```bash
 ./mill 'plugin[3.9.0].test.testCached'
 ```
 
-CI tests Scala `3.9.0` on JDK `17`, `21`, `25`, and `26`.
+CI runs the suite on JDK `17`, `21`, `25`, and `26`.
 
-Publish to the local Ivy repository:
+Publish locally:
 
 ```bash
 ./mill 'plugin[3.9.0].publishLocal'
@@ -282,14 +151,14 @@ Publish to the local Ivy repository:
 
 ## Release
 
-The release workflow publishes the Scala `3.9.0` compiler-plugin artifact to Maven Central when a `vX.Y.Z` tag is pushed.
+Pushing a `vX.Y.Z` tag publishes the Scala 3.9.0 artifact to Maven Central:
 
 ```bash
 git tag v0.1.0
 git push origin master --follow-tags
 ```
 
-The equivalent manual release command is:
+The equivalent Mill command is:
 
 ```bash
 ./mill mill.javalib.SonatypeCentralPublishModule/publishAll \
@@ -297,13 +166,11 @@ The equivalent manual release command is:
   --bundleName "com.yoohaemin-explicitly-inferred-v0.1.0"
 ```
 
-Use a new version when releasing the corrected compiler-plugin coordinates. The already-published `0.1.0-M1` artifact uses library-style `_3` coordinates and should be treated as superseded rather than reused.
-
-Before the first release, configure the GitHub repository secrets used by Mill:
+The release workflow uses these repository secrets:
 
 - `MILL_PGP_PASSPHRASE`
 - `MILL_PGP_SECRET_BASE64`
 - `MILL_SONATYPE_USERNAME`
 - `MILL_SONATYPE_PASSWORD`
 
-You also need a verified `com.yoohaemin` namespace in Maven Central and a GPG key exported in the format Mill expects.
+Publishing also requires a verified `com.yoohaemin` Maven Central namespace and the corresponding public signing key.

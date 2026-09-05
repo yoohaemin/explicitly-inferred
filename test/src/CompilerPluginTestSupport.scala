@@ -1,171 +1,107 @@
-import commenter.InferredReturnCommentPlugin
+package explicitlyinferred
 
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Paths
 
 object CompilerPluginTestSupport {
-  val newline = "\n"
-  val defaultManagedTag = "@inferredReturnType"
-  val defaultSyntaxOptions = Seq("-no-indent", "-old-syntax")
+  private val PluginPrefix = "-P:explicitlyInferred:"
+  private val DefaultEffectRegex = ".*Effect"
+  private val DefaultSyntaxOptions = Seq("-no-indent", "-old-syntax")
 
   def rewrite(
       source: String,
-      methodRegex: String = ".*",
       extraOptions: Seq[String] = Seq.empty,
-      includeDefaultMethodRegex: Boolean = true
+      methodRegex: String = ".*"
   ): String =
-    rewriteFiles(
-      Seq("Sample.scala" -> source),
-      methodRegex = methodRegex,
-      extraOptions = extraOptions,
-      includeDefaultMethodRegex = includeDefaultMethodRegex
-    )("Sample.scala")
+    rewriteFiles(Seq("Sample.scala" -> source), extraOptions, methodRegex)("Sample.scala")
 
-  def rewriteRaw(
-      source: String,
-      methodRegex: String = ".*",
-      extraOptions: Seq[String] = Seq.empty,
-      includeDefaultMethodRegex: Boolean = true
-  ): String =
-    rewriteFilesRaw(
-      Seq("Sample.scala" -> source),
-      methodRegex = methodRegex,
-      extraOptions = extraOptions,
-      includeDefaultMethodRegex = includeDefaultMethodRegex
-    )("Sample.scala")
-
-  def compileWithoutRewrite(
-      source: String,
-      methodRegex: String = ".*",
-      extraOptions: Seq[String] = Seq.empty,
-      includeDefaultMethodRegex: Boolean = true
-  ): String =
-    rewriteFiles(
-      Seq("Sample.scala" -> source),
-      methodRegex = methodRegex,
-      extraOptions = extraOptions,
-      includeRewrite = false,
-      includeDefaultMethodRegex = includeDefaultMethodRegex
-    )("Sample.scala")
+  def rewriteRaw(source: String, extraOptions: Seq[String] = Seq.empty): String =
+    compile(Seq("Sample.scala" -> source), extraOptions = extraOptions).files("Sample.scala")
 
   def rewriteFiles(
       sources: Seq[(String, String)],
-      methodRegex: String = ".*",
       extraOptions: Seq[String] = Seq.empty,
-      includeRewrite: Boolean = true,
-      includeDefaultMethodRegex: Boolean = true
-  ): Map[String, String] =
-    rewriteFilesRaw(
-      sources,
-      methodRegex = methodRegex,
-      extraOptions = extraOptions,
-      includeRewrite = includeRewrite,
-      includeDefaultMethodRegex = includeDefaultMethodRegex
-    )
-      .view
-      .mapValues(normalize)
-      .toMap
-
-  def rewriteFilesRaw(
-      sources: Seq[(String, String)],
-      methodRegex: String = ".*",
-      extraOptions: Seq[String] = Seq.empty,
-      includeRewrite: Boolean = true,
-      includeDefaultMethodRegex: Boolean = true
+      methodRegex: String = ".*"
   ): Map[String, String] = {
-    val result = runCompiler(
-      sources,
-      methodRegex = methodRegex,
-      extraOptions = extraOptions,
-      includeRewrite = includeRewrite,
-      includeDefaultMethodRegex = includeDefaultMethodRegex
-    )
-    if result.exitCode != 0 then
-      throw new java.lang.AssertionError(result.out + newline + result.err)
-    result.files
+    val result = compile(sources, extraOptions = extraOptions, methodRegex = methodRegex)
+    if result.exitCode != 0 then throw new AssertionError(result.out + "\n" + result.err)
+    result.files.view.mapValues(normalize).toMap
+  }
+
+  def compileWithoutRewrite(source: String, extraOptions: Seq[String] = Seq.empty): String = {
+    val result = compile(Seq("Sample.scala" -> source), extraOptions = extraOptions, includeRewrite = false)
+    if result.exitCode != 0 then throw new AssertionError(result.out + "\n" + result.err)
+    result.files("Sample.scala")
   }
 
   def rewriteExpectFailure(
       source: String,
-      methodRegex: String = ".*",
       extraOptions: Seq[String] = Seq.empty,
-      includeDefaultMethodRegex: Boolean = true
-  ): Unit = {
-    val result = runCompiler(
+      includeDefaultEffectRegex: Boolean = true
+  ): CompileResult = {
+    val result = compile(
       Seq("Sample.scala" -> source),
-      methodRegex = methodRegex,
       extraOptions = extraOptions,
-      includeDefaultMethodRegex = includeDefaultMethodRegex
+      includeDefaultEffectRegex = includeDefaultEffectRegex
     )
     assert(result.exitCode != 0)
     assert(result.files("Sample.scala") == source)
+    result
   }
 
-  def managedCommentLines(text: String, managedTag: String = defaultManagedTag): Seq[String] =
-    normalize(text)
-      .linesIterator
-      .map(_.trim)
-      .filter(line => line.startsWith(s"* $managedTag") || line.startsWith("*   "))
-      .toSeq
-      .map(_.stripPrefix("* ").trim)
-
-  def managedCommentBody(text: String, managedTag: String = defaultManagedTag): String =
-    managedCommentLines(text, managedTag).mkString(newline)
-
-  private def runCompiler(
+  def compile(
       sources: Seq[(String, String)],
-      methodRegex: String = ".*",
       extraOptions: Seq[String] = Seq.empty,
+      methodRegex: String = ".*",
       includeRewrite: Boolean = true,
-      includeDefaultMethodRegex: Boolean = true
+      includeDefaultEffectRegex: Boolean = true
   ): CompileResult = {
-    val workspace = os.temp.dir(prefix = "commenter-test")
-    val outDir = workspace / "out"
-    os.makeDir.all(outDir)
+    val workspace = os.temp.dir(prefix = "explicitly-inferred-test")
+    val outputDirectory = workspace / "out"
+    os.makeDir.all(outputDirectory)
     sources.foreach { (name, content) =>
       os.write.over(workspace / name, content.getBytes(StandardCharsets.UTF_8), createFolders = true)
     }
 
-    val args = Seq(
-      "java",
-      "-cp",
-      sys.props("java.class.path"),
-      "dotty.tools.dotc.Main"
-    ) ++
-      (if includeRewrite then Seq.empty else defaultSyntaxOptions) ++
-      (if includeRewrite then Seq("-rewrite") else Seq.empty) ++
-      Seq(
-        "-classpath",
-        sys.props("java.class.path"),
-        "-d",
-        outDir.toString,
-        s"-Xplugin:${pluginPathString}"
-      ) ++
-      (if includeDefaultMethodRegex then Seq(s"-P:inferredReturnComment:methodRegex=$methodRegex") else Seq.empty) ++
-      extraOptions.map(option => s"-P:inferredReturnComment:$option") ++
-      sources.map { (name, _) => (workspace / name).toString }
+    val pluginOptions =
+      Seq(s"${PluginPrefix}methodRegex=$methodRegex") ++
+        (if includeDefaultEffectRegex then Seq(s"${PluginPrefix}effectTypeRegex=$DefaultEffectRegex") else Seq.empty) ++
+        extraOptions.map(PluginPrefix + _)
+    val arguments =
+      Seq("java", "-cp", sys.props("java.class.path"), "dotty.tools.dotc.Main") ++
+        (if includeRewrite then Seq("-rewrite") else DefaultSyntaxOptions) ++
+        Seq(
+          "-classpath",
+          sys.props("java.class.path"),
+          "-d",
+          outputDirectory.toString,
+          s"-Xplugin:$pluginPath"
+        ) ++
+        pluginOptions ++
+        sources.map { (name, _) => (workspace / name).toString }
 
-    val result = os.proc(args).call(cwd = workspace, check = false)
+    val process = os.proc(arguments).call(cwd = workspace, check = false)
     val files = sources.map { (name, _) =>
       name -> new String(os.read.bytes(workspace / name), StandardCharsets.UTF_8)
     }.toMap
-    CompileResult(result.exitCode, result.out.text(), result.err.text(), files)
+    CompileResult(process.exitCode, process.out.text(), process.err.text(), files)
   }
 
-  private final case class CompileResult(
-      exitCode: Int,
-      out: String,
-      err: String,
-      files: Map[String, String]
-  )
+  final case class CompileResult(exitCode: Int, out: String, err: String, files: Map[String, String])
 
-  private def pluginPathString: String = {
-    val classPath = Paths.get(classOf[InferredReturnCommentPlugin].getProtectionDomain.getCodeSource.getLocation.toURI).toString
-    val resourcePath = Paths.get(getClass.getClassLoader.getResource("plugin.properties").toURI).getParent.toString
-    Seq(classPath, resourcePath).distinct.mkString(File.pathSeparator)
+  def expectIllegalArgument(body: => Any): IllegalArgumentException =
+    try
+      body
+      throw new AssertionError("Expected IllegalArgumentException")
+    catch
+      case error: IllegalArgumentException => error
+
+  private def pluginPath: String = {
+    val classes = Paths.get(classOf[ExplicitlyInferredPlugin].getProtectionDomain.getCodeSource.getLocation.toURI).toString
+    val resources = Paths.get(getClass.getClassLoader.getResource("plugin.properties").toURI).getParent.toString
+    Seq(classes, resources).distinct.mkString(File.pathSeparator)
   }
 
-  private def normalize(text: String): String =
-    text.replace("\r\n", newline)
+  private def normalize(text: String): String = text.replace("\r\n", "\n")
 }

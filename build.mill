@@ -27,7 +27,7 @@ object `package` extends Module {
     )
 
     def pomSettings = PomSettings(
-      description = "Scala 3 compiler plugin that adds explicit inferred return-type comments during -rewrite",
+      description = "Scala 3 compiler plugin that writes inferred effect errors and results into Scaladoc",
       organization = "com.yoohaemin",
       url = "https://github.com/yoohaemin/explicitly-inferred",
       licenses = Seq(License.`Apache-2.0`),
