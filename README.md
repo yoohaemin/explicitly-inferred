@@ -107,7 +107,7 @@ Mappings and their headings must be unique. Additional values and exclusion patt
 -P:explicitlyInferred:excludeTypeRegex=L:.*Internal
 ```
 
-Exclusion patterns are tested against both the rendered name and full type name. If filtering leaves a section empty, it contains `Nothing`.
+Exclusion patterns are tested against both the rendered name and full type name. Top-level `Nothing` is treated as an empty inferred set and appears only when a section has no inferred or additional entries.
 
 Versions before `0.1.0-M8` used effect-specific options. Replace them as follows; the old names are rejected:
 

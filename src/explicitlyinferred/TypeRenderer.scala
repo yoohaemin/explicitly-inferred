@@ -62,6 +62,9 @@ private[explicitlyinferred] object TypeRenderer {
     if symbol.exists then symbol.fullName.show else normalized.show
   }
 
+  def isNothing(tpe: Type)(using context: Context): Boolean =
+    normalize(tpe, AliasPolicy.Dealias).typeSymbol == context.definitions.NothingClass
+
   private def toNode(tpe: Type, settings: TypeRenderSettings)(using Context): TypeNode = {
     val normalized = normalize(tpe, settings.aliasPolicy)
     if settings.aliasPolicy == AliasPolicy.Preserve && isCompilerInternalAlias(normalized) then
@@ -186,12 +189,26 @@ private[explicitlyinferred] object TypeRenderer {
 
   private def displayName(tpe: Type, settings: TypeRenderSettings)(using Context): String =
     normalize(tpe, settings.aliasPolicy) match
-      case ref: TypeRef if ref.symbol.exists => displaySymbol(ref.symbol, settings.nameStyle)
+      case ref: TypeRef if ref.symbol.exists =>
+        concreteOpaqueOwner(ref, settings.aliasPolicy).fold(displaySymbol(ref.symbol, settings.nameStyle)) { owner =>
+          displaySymbol(owner, settings.nameStyle)
+        }
       case ref: TermRef if ref.symbol.exists => displaySymbol(ref.symbol, settings.nameStyle)
       case thisType: ThisType => displaySymbol(thisType.tref.symbol, settings.nameStyle)
       case constant: ConstantType => constant.show
       case bounds: TypeBounds => bounds.show
       case other => other.show
+
+  private def concreteOpaqueOwner(ref: TypeRef, aliasPolicy: AliasPolicy)(using Context): Option[Symbol] = {
+    val prefixSymbol = ref.prefix.termSymbol
+    Option.when(
+      aliasPolicy == AliasPolicy.Preserve &&
+        ref.symbol.is(Flags.Opaque) &&
+        ref.symbol.name.show == "Type" &&
+        prefixSymbol.exists &&
+        prefixSymbol != ref.symbol.owner
+    )(prefixSymbol)
+  }
 
   private def displaySymbol(symbol: Symbol, style: TypeNameStyle)(using Context): String =
     style match
@@ -205,9 +222,18 @@ private[explicitlyinferred] object TypeRenderer {
 
   private def stableKey(tpe: Type, display: String, aliasPolicy: AliasPolicy)(using Context): String = {
     val normalized = normalize(tpe, aliasPolicy)
-    val symbol = normalized.typeSymbol
+    normalized match
+      case ref: TypeRef =>
+        concreteOpaqueOwner(ref, aliasPolicy) match
+          case Some(owner) => s"${owner.coord}:${owner.fullName.show}"
+          case None => symbolKey(normalized, display)
+      case _ => symbolKey(normalized, display)
+  }
+
+  private def symbolKey(tpe: Type, display: String)(using Context): String = {
+    val symbol = tpe.typeSymbol
     if symbol.exists then s"${symbol.coord}:${symbol.owner.fullName.show}.${symbol.name.show}"
-    else s"$display#${normalized.show}"
+    else s"$display#${tpe.show}"
   }
 
   private def render(node: TypeNode, parentPrecedence: Int = 0): String = {

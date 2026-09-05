@@ -38,6 +38,22 @@ object CompilerPluginTestSupport {
     result.files.view.mapValues(normalize).toMap
   }
 
+  def rewriteWithPrecompiledSource(
+      dependencySource: String,
+      source: String,
+      extraOptions: Seq[String] = Seq.empty,
+      typeParameters: Seq[String] = DefaultTypeParameters
+  ): String = {
+    val result = compile(
+      Seq("Sample.scala" -> source),
+      extraOptions = extraOptions,
+      typeParameters = typeParameters,
+      precompiledSources = Seq("Dependency.scala" -> dependencySource)
+    )
+    if result.exitCode != 0 then throw new AssertionError(result.out + "\n" + result.err)
+    normalize(result.files("Sample.scala"))
+  }
+
   def compileWithoutRewrite(
       source: String,
       extraOptions: Seq[String] = Seq.empty,
@@ -73,7 +89,8 @@ object CompilerPluginTestSupport {
       extraOptions: Seq[String] = Seq.empty,
       methodRegex: String = ".*",
       includeRewrite: Boolean = true,
-      typeParameters: Seq[String] = DefaultTypeParameters
+      typeParameters: Seq[String] = DefaultTypeParameters,
+      precompiledSources: Seq[(String, String)] = Seq.empty
   ): CompileResult = {
     val workspace = os.temp.dir(prefix = "explicitly-inferred-test")
     val outputDirectory = workspace / "out"
@@ -81,6 +98,35 @@ object CompilerPluginTestSupport {
     sources.foreach { (name, content) =>
       os.write.over(workspace / name, content.getBytes(StandardCharsets.UTF_8), createFolders = true)
     }
+    precompiledSources.foreach { (name, content) =>
+      os.write.over(workspace / name, content.getBytes(StandardCharsets.UTF_8), createFolders = true)
+    }
+
+    val dependencyClasspath =
+      if precompiledSources.isEmpty then sys.props("java.class.path")
+      else {
+        val dependencyOutput = workspace / "dependency-out"
+        os.makeDir(dependencyOutput)
+        val dependencyArguments = Seq(
+          "java",
+          "-cp",
+          sys.props("java.class.path"),
+          "dotty.tools.dotc.Main",
+          "-classpath",
+          sys.props("java.class.path"),
+          "-d",
+          dependencyOutput.toString
+        ) ++ precompiledSources.map { (name, _) => (workspace / name).toString }
+        val dependencyProcess = os.proc(dependencyArguments).call(
+          cwd = workspace,
+          check = false,
+          stdout = os.Pipe,
+          stderr = os.Pipe
+        )
+        if dependencyProcess.exitCode != 0 then
+          throw new AssertionError(dependencyProcess.out.text() + "\n" + dependencyProcess.err.text())
+        Seq(dependencyOutput.toString, sys.props("java.class.path")).mkString(File.pathSeparator)
+      }
 
     val pluginOptions =
       Seq(s"${PluginPrefix}methodRegex=$methodRegex") ++
@@ -91,7 +137,7 @@ object CompilerPluginTestSupport {
         (if includeRewrite then Seq("-rewrite") else DefaultSyntaxOptions) ++
         Seq(
           "-classpath",
-          sys.props("java.class.path"),
+          dependencyClasspath,
           "-d",
           outputDirectory.toString,
           s"-Xplugin:$pluginPath"

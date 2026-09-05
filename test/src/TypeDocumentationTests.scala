@@ -93,6 +93,51 @@ object TypeDocumentationTests extends TestSuite {
       assert(output.contains("*   - (pending: Option[String])"))
     }
 
+    test("preserves the concrete owner of inherited opaque Type aliases") {
+      val dependency =
+        """import neotype.Subtype
+          |
+          |object AdminImpersonation {
+          |  object Code extends Subtype[String]
+          |}
+          |
+          |object CustomerImpersonation {
+          |  object Code extends Subtype[String]
+          |}
+          |""".stripMargin
+      val input =
+        """object Sample {
+          |
+          |  final class Container[C, L, R]
+          |  def code = null.asInstanceOf[
+          |    Container[Any, Nothing, AdminImpersonation.Code.Type | CustomerImpersonation.Code.Type]
+          |  ]
+          |}
+          |""".stripMargin
+
+      val output = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=owner"))
+
+      assert(output.contains("*   - AdminImpersonation.Code"))
+      assert(output.contains("*   - CustomerImpersonation.Code"))
+      assert(!output.contains("*   - Subtype.Type"))
+    }
+
+    test("uses Nothing only as the empty section fallback") {
+      val input =
+        """object Sample {
+          |  final class Container[C, L, R]
+          |  def value = null.asInstanceOf[Container[Any, Nothing, Unit]]
+          |}
+          |""".stripMargin
+
+      val empty = rewrite(input)
+      val augmented = rewrite(input, extraOptions = Seq("additionalType=L:Unexpected"))
+
+      assert(empty.contains("*   - Nothing"))
+      assert(augmented.contains("*   - Unexpected"))
+      assert(!augmented.contains("*   - Nothing"))
+    }
+
     test("applies additions and exclusions to their target parameter") {
       val input =
         """object Sample {

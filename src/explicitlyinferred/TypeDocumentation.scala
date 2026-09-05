@@ -31,14 +31,17 @@ private[explicitlyinferred] final class TypeDocumentationBuilder(config: Documen
     typeArguments(tpe).map { arguments =>
       val sections = config.parameters.zip(arguments).map { (parameter, argument) =>
         val settings = TypeRenderSettings(config.typeNameStyle, parameter.aliasPolicy)
-        val inferred = TypeRenderer
-          .unionEntries(argument, settings)
-          .filterNot { rendered =>
-            parameter.excludedTypes.exists { pattern =>
-              pattern.matcher(rendered.fullName).matches() || pattern.matcher(rendered.display).matches()
-            }
-          }
-          .map(_.display)
+        val inferred =
+          if TypeRenderer.isNothing(argument) then Nil
+          else
+            TypeRenderer
+              .unionEntries(argument, settings)
+              .filterNot { rendered =>
+                parameter.excludedTypes.exists { pattern =>
+                  pattern.matcher(rendered.fullName).matches() || pattern.matcher(rendered.display).matches()
+                }
+              }
+              .map(_.display)
         DocumentationSection(
           parameter.heading,
           nonEmpty((inferred ++ parameter.additionalTypes).distinct.sorted)
