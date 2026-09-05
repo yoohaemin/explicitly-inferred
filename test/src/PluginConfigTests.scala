@@ -31,8 +31,8 @@ object PluginConfigTests extends TestSuite {
 
     test("parses ordered mappings and targeted controls") {
       val config = PluginConfig.parse(List(
-        "additionalType=L:Fallback:Value",
-        "excludeTypeRegex=R:Internal:.*",
+        "additionalType=L:Added:Value",
+        "excludeTypeRegex=R:Hidden:.*",
         "typeRegex=First",
         "typeRegex=Second",
         "scope=all",
@@ -48,8 +48,8 @@ object PluginConfigTests extends TestSuite {
       assert(config.documentation.parameters.map(_.name) == List("L", "R"))
       assert(config.documentation.parameters.map(_.heading) == List("Left: side", "Right"))
       assert(config.documentation.parameters.map(_.aliasPolicy) == List(AliasPolicy.Dealias, AliasPolicy.Preserve))
-      assert(config.documentation.parameters.head.additionalTypes == List("Fallback:Value"))
-      assert(config.documentation.parameters(1).excludedTypes.map(_.pattern()) == List("Internal:.*"))
+      assert(config.documentation.parameters.head.additionalTypes == List("Added:Value"))
+      assert(config.documentation.parameters(1).excludedTypes.map(_.pattern()) == List("Hidden:.*"))
       assert(config.documentation.typeNameStyle == TypeNameStyle.Full)
       assert(config.documentation.markers == Markers("inferred-types", "/inferred-types"))
     }
@@ -59,8 +59,8 @@ object PluginConfigTests extends TestSuite {
         "effectTypeRegex=.*Effect",
         "errorTypeParam=E",
         "resultTypeParam=A",
-        "additionalErrorType=Unexpected",
-        "excludeErrorTypeRegex=.*Internal"
+        "additionalErrorType=Added",
+        "excludeErrorTypeRegex=.*Hidden"
       ).foreach { option =>
         val error = expectIllegalArgument(PluginConfig.parse(List(required, option)))
         assert(error.getMessage.contains("Unknown explicitlyInferred option"))

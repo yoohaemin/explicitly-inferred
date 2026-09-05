@@ -51,7 +51,7 @@ Each `typeParam` selects a formal type-parameter name, assigns its Scaladoc head
 Before:
 
 ```scala
-def create = null.asInstanceOf[Container[Any, Foo | Bar, Unit]]
+def value = null.asInstanceOf[Container[Any, TypeOne | TypeTwo, Unit]]
 ```
 
 After:
@@ -60,14 +60,14 @@ After:
 /**
   * <!-- types -->
   * Left:
-  *   - Bar
-  *   - Foo
+  *   - TypeOne
+  *   - TypeTwo
   *
   * Right:
   *   - Unit
   * <!-- /types -->
   */
-def create = null.asInstanceOf[Container[Any, Foo | Bar, Unit]]
+def value = null.asInstanceOf[Container[Any, TypeOne | TypeTwo, Unit]]
 ```
 
 Existing prose and Scaladoc tags outside the managed region are preserved. Union members are normalized, deduplicated, and sorted.
@@ -83,7 +83,7 @@ Existing prose and Scaladoc tags outside the managed region are preserved. Union
 | `methodRegex=<java-regex>` | `.*` | Matches the full simple method name. Repeatable as a pipeline. |
 | `methodRegexRewrite=<java-replacement>` | none | Rewrites the preceding capturing regex match before the next method stage. |
 | `scope=members\|all\|nonPrivate` | `members` | Selects members, all defs including locals, or non-private members. |
-| `typeNameStyle=simple\|owner\|full` | `simple` | Controls qualification of rendered type names. |
+| `typeNameStyle=simple\|owner\|full` | `simple` | Uses simple names, every non-package source owner, or full package qualification. |
 | `startMarker=<text>` | `types` | Sets the opening managed-region marker body. |
 | `endMarker=<text>` | `/types` | Sets the closing managed-region marker body. |
 
@@ -103,8 +103,8 @@ Without `typeRegex`, any outer parameterized inferred return type is eligible. A
 Mappings and their headings must be unique. Additional values and exclusion patterns target a configured formal parameter and may appear before or after its mapping:
 
 ```text
--P:explicitlyInferred:additionalType=L:Fallback
--P:explicitlyInferred:excludeTypeRegex=L:.*Internal
+-P:explicitlyInferred:additionalType=L:AddedOne
+-P:explicitlyInferred:excludeTypeRegex=L:.*HiddenOne
 ```
 
 Exclusion patterns are tested against both the rendered name and full type name. Top-level `Nothing` is treated as an empty inferred set and appears only when a section has no inferred or additional entries.
@@ -114,8 +114,8 @@ Versions before `0.1.0-M8` used effect-specific options. Replace them as follows
 | Before M8 | M8 and later |
 | --- | --- |
 | `effectTypeRegex=<regex>` | `typeRegex=<regex>` |
-| `errorTypeParam=E` | `typeParam=E:Errors:dealias` |
-| `resultTypeParam=A` | `typeParam=A:Returns:preserve` |
+| `errorTypeParam=E` | `typeParam=E:First:dealias` |
+| `resultTypeParam=A` | `typeParam=A:Second:preserve` |
 | `additionalErrorType=<value>` | `additionalType=E:<value>` |
 | `excludeErrorTypeRegex=<regex>` | `excludeTypeRegex=E:<regex>` |
 
@@ -126,7 +126,7 @@ Versions before `0.1.0-M8` used effect-specific options. Replace them as follows
 ```text
 -P:explicitlyInferred:methodRegex=prefix\.(?<name>.*)
 -P:explicitlyInferred:methodRegexRewrite=${name}
--P:explicitlyInferred:methodRegex=create
+-P:explicitlyInferred:methodRegex=value
 ```
 
 Rules:

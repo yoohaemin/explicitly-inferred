@@ -4,8 +4,8 @@ import utest.*
 
 object ScaladocEditorTests extends TestSuite {
   private val documentation = TypeDocumentation(List(
-    DocumentationSection("Left", List("Alpha", "Zebra")),
-    DocumentationSection("Right", List("Value"))
+    DocumentationSection("Left", List("EntryOne", "EntryTwo")),
+    DocumentationSection("Right", List("EntryThree"))
   ))
   private val markers = Markers("types", "/types")
 
@@ -15,11 +15,11 @@ object ScaladocEditorTests extends TestSuite {
         """  /**
           |   * <!-- types -->
           |   * Left:
-          |   *   - Alpha
-          |   *   - Zebra
+          |   *   - EntryOne
+          |   *   - EntryTwo
           |   *
           |   * Right:
-          |   *   - Value
+          |   *   - EntryThree
           |   * <!-- /types -->
           |   */
           |""".stripMargin
@@ -41,7 +41,7 @@ object ScaladocEditorTests extends TestSuite {
 
       assert(output.contains("Existing documentation."))
       assert(output.contains("@param value existing tag"))
-      assert(output.contains("*   - Alpha"))
+      assert(output.contains("*   - EntryOne"))
       assert(!output.contains("Stale"))
       assert(output.indexOf("<!-- /types -->") < output.indexOf("@param"))
       assert(ScaladocEditor.update(output, "", documentation, markers, "\n") == output)

@@ -10,33 +10,33 @@ object TypeDocumentationTests extends TestSuite {
       val input =
         """object Sample {
           |  final class Container[C, L, R]
-          |  object Members {
-          |    final class Zebra
-          |    final class Alpha
+          |  object NodeGroup {
+          |    final class LeafTwo
+          |    final class LeafOne
           |  }
           |
-          |  def value = null.asInstanceOf[Container[Any, Members.Zebra | Members.Alpha, Option[String]]]
+          |  def value = null.asInstanceOf[Container[Any, NodeGroup.LeafTwo | NodeGroup.LeafOne, Option[String]]]
           |}
           |""".stripMargin
       val expected =
         """object Sample {
           |  final class Container[C, L, R]
-          |  object Members {
-          |    final class Zebra
-          |    final class Alpha
+          |  object NodeGroup {
+          |    final class LeafTwo
+          |    final class LeafOne
           |  }
           |
           |  /**
           |   * <!-- types -->
           |   * Left:
-          |   *   - Members.Alpha
-          |   *   - Members.Zebra
+          |   *   - Sample.NodeGroup.LeafOne
+          |   *   - Sample.NodeGroup.LeafTwo
           |   *
           |   * Right:
           |   *   - Option[String]
           |   * <!-- /types -->
           |   */
-          |  def value = null.asInstanceOf[Container[Any, Members.Zebra | Members.Alpha, Option[String]]]
+          |  def value = null.asInstanceOf[Container[Any, NodeGroup.LeafTwo | NodeGroup.LeafOne, Option[String]]]
           |}
           |""".stripMargin
 
@@ -49,9 +49,9 @@ object TypeDocumentationTests extends TestSuite {
       val input =
         """object Sample {
           |  final class Pair[First, Second]
-          |  final class Alpha
-          |  final class Zebra
-          |  type ExpandedAlias = Zebra | Alpha
+          |  final class LeafOne
+          |  final class LeafTwo
+          |  type ExpandedAlias = LeafTwo | LeafOne
           |  type PreservedAlias = Option[String]
           |  def value = null.asInstanceOf[Pair[ExpandedAlias, PreservedAlias]]
           |}
@@ -64,90 +64,109 @@ object TypeDocumentationTests extends TestSuite {
       val output = rewrite(input, typeParameters = mappings)
 
       assert(output.contains("* Expanded:"))
-      assert(output.contains("*   - Alpha"))
-      assert(output.contains("*   - Zebra"))
+      assert(output.contains("*   - LeafOne"))
+      assert(output.contains("*   - LeafTwo"))
       assert(output.contains("* Preserved:"))
       assert(output.contains("*   - PreservedAlias"))
     }
 
     test("renders opaque aliases tuples and named tuples") {
       val input =
-        """object Domain {
-          |  opaque type Id = String
+        """object NodeZero {
+          |  opaque type LeafZero = String
           |}
           |
           |object Sample {
           |  final class Container[C, L, R]
-          |  def id = null.asInstanceOf[Container[Any, Nothing, Domain.Id]]
-          |  def tuple = null.asInstanceOf[Container[Any, Nothing, (Domain.Id, Option[String])]]
+          |  def first = null.asInstanceOf[Container[Any, Nothing, NodeZero.LeafZero]]
+          |  def tuple = null.asInstanceOf[Container[Any, Nothing, (NodeZero.LeafZero, Option[String])]]
           |  def named = null.asInstanceOf[
-          |    Container[Any, Nothing, NamedTuple.NamedTuple[Tuple1["pending"], Tuple1[Option[String]]]]
+          |    Container[Any, Nothing, NamedTuple.NamedTuple[Tuple1["fieldOne"], Tuple1[Option[String]]]]
           |  ]
           |}
           |""".stripMargin
 
       val output = rewrite(input, extraOptions = Seq("typeNameStyle=owner"))
 
-      assert(output.contains("*   - Domain.Id"))
-      assert(output.contains("*   - (Domain.Id, Option[String])"))
-      assert(output.contains("*   - (pending: Option[String])"))
+      assert(output.contains("*   - NodeZero.LeafZero"))
+      assert(output.contains("*   - (NodeZero.LeafZero, Option[String])"))
+      assert(output.contains("*   - (fieldOne: Option[String])"))
     }
 
     test("preserves the concrete owner of inherited opaque Type aliases") {
       val dependency =
-        """import neotype.Subtype
+        """package fixture
           |
-          |object FirstOwner {
-          |  object Code extends Subtype[String]
+          |abstract class Wrapper[A] {
+          |  opaque type Type <: A = A
           |}
           |
-          |object SecondOwner {
-          |  object Code extends Subtype[String]
+          |object NodeOne {
+          |  object BranchOne {
+          |    object LeafOne extends Wrapper[String]
+          |  }
+          |}
+          |
+          |object NodeTwo {
+          |  object BranchTwo {
+          |    object LeafTwo extends Wrapper[String]
+          |  }
           |}
           |""".stripMargin
       val input =
-        """object Sample {
+        """import fixture.{NodeOne, NodeTwo}
           |
+          |object Sample {
           |  final class Container[C, L, R]
-          |  def code = null.asInstanceOf[
-          |    Container[Any, Nothing, FirstOwner.Code.Type | SecondOwner.Code.Type]
+          |  def value = null.asInstanceOf[
+          |    Container[Any, Nothing, NodeOne.BranchOne.LeafOne.Type | NodeTwo.BranchTwo.LeafTwo.Type]
           |  ]
           |}
           |""".stripMargin
 
-      val output = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=owner"))
+      val simple = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=simple"))
+      val owner = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=owner"))
+      val full = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=full"))
 
-      assert(output.contains("*   - FirstOwner.Code"))
-      assert(output.contains("*   - SecondOwner.Code"))
-      assert(!output.contains("*   - Subtype.Type"))
+      assert(simple.contains("*   - LeafOne"))
+      assert(simple.contains("*   - LeafTwo"))
+      assert(owner.contains("*   - NodeOne.BranchOne.LeafOne"))
+      assert(owner.contains("*   - NodeTwo.BranchTwo.LeafTwo"))
+      assert(full.contains("*   - fixture.NodeOne.BranchOne.LeafOne"))
+      assert(full.contains("*   - fixture.NodeTwo.BranchTwo.LeafTwo"))
+      assert(!simple.contains("*   - Wrapper.Type"))
+      assert(!owner.contains("*   - Wrapper.Type"))
+      assert(!full.contains("*   - fixture.Wrapper.Type"))
     }
 
     test("hides synthetic package owners for top-level aliases") {
       val dependency =
-        """package domain
+        """package fixture
           |
-          |import neotype.Subtype
+          |type AliasOne = AliasOne.Type
+          |object AliasOne extends Wrapper[String]
           |
-          |type Timestamp = Timestamp.Type
-          |object Timestamp extends Subtype[java.time.Instant]
+          |abstract class Wrapper[A] {
+          |  opaque type Type <: A = A
+          |}
           |""".stripMargin
       val input =
-        """package usage
+        """package sample
           |
-          |import domain.Timestamp
+          |import fixture.AliasOne
           |
           |object Sample {
           |  final class Container[C, L, R]
-          |  def timestamp = null.asInstanceOf[Container[Any, Nothing, Option[(Timestamp, String)]]]
+          |  def value = null.asInstanceOf[Container[Any, Nothing, Option[(AliasOne, String)]]]
           |}
           |""".stripMargin
 
       val owner = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=owner"))
       val full = rewriteWithPrecompiledSource(dependency, input, extraOptions = Seq("typeNameStyle=full"))
 
-      assert(owner.contains("*   - Option[(Timestamp, String)]"))
+      assert(owner.contains("*   - Option[(AliasOne, String)]"))
       assert(!owner.contains("$package"))
-      assert(full.contains("domain.Timestamp"))
+      assert(full.contains("fixture.AliasOne"))
       assert(!full.contains("$package"))
     }
 
@@ -160,10 +179,10 @@ object TypeDocumentationTests extends TestSuite {
           |""".stripMargin
 
       val empty = rewrite(input)
-      val augmented = rewrite(input, extraOptions = Seq("additionalType=L:Unexpected"))
+      val augmented = rewrite(input, extraOptions = Seq("additionalType=L:AddedOne"))
 
       assert(empty.contains("*   - Nothing"))
-      assert(augmented.contains("*   - Unexpected"))
+      assert(augmented.contains("*   - AddedOne"))
       assert(!augmented.contains("*   - Nothing"))
     }
 
@@ -171,21 +190,21 @@ object TypeDocumentationTests extends TestSuite {
       val input =
         """object Sample {
           |  final class Container[C, L, R]
-          |  final class Internal[A]
-          |  def value = null.asInstanceOf[Container[Any, Internal[Int], Unit]]
+          |  final class HiddenOne[A]
+          |  def value = null.asInstanceOf[Container[Any, HiddenOne[Int], Unit]]
           |}
           |""".stripMargin
       val options = Seq(
-        "additionalType=L:Fallback",
-        "excludeTypeRegex=L:.*Internal",
-        "additionalType=R:Companion"
+        "additionalType=L:AddedOne",
+        "excludeTypeRegex=L:.*HiddenOne",
+        "additionalType=R:AddedTwo"
       )
 
       val output = rewrite(input, extraOptions = options)
 
-      assert(output.contains("*   - Fallback"))
-      assert(!output.contains("*   - Internal[Int]"))
-      assert(output.contains("*   - Companion"))
+      assert(output.contains("*   - AddedOne"))
+      assert(!output.contains("*   - HiddenOne[Int]"))
+      assert(output.contains("*   - AddedTwo"))
       assert(output.contains("*   - Unit"))
     }
 

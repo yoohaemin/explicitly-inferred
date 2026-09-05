@@ -215,10 +215,17 @@ private[explicitlyinferred] object TypeRenderer {
       case TypeNameStyle.Simple => symbol.name.show
       case TypeNameStyle.Full => sourceFullName(symbol)
       case TypeNameStyle.Owner =>
-        val owner = sourceOwner(symbol)
         if sourceFullName(symbol).startsWith("scala.") then symbol.name.show
-        else if owner.exists && !owner.is(Flags.Package) then s"${owner.name.show}.${symbol.name.show}"
-        else symbol.name.show
+        else sourceOwnerPath(symbol).mkString(".")
+
+  private def sourceOwnerPath(symbol: Symbol)(using Context): List[String] = {
+    val names = mutable.ListBuffer(symbol.name.show)
+    var owner = sourceOwner(symbol)
+    while owner.exists && !owner.is(Flags.Package) do
+      names.prepend(owner.name.show)
+      owner = sourceOwner(owner)
+    names.toList
+  }
 
   private def sourceOwner(symbol: Symbol)(using Context): Symbol = {
     val owner = symbol.owner
@@ -229,8 +236,10 @@ private[explicitlyinferred] object TypeRenderer {
     val owner = sourceOwner(symbol)
     if owner.exists && owner.is(Flags.Package) then
       val ownerName = owner.fullName.show
-      if ownerName.isEmpty || ownerName == "<root>" then symbol.name.show else s"$ownerName.${symbol.name.show}"
-    else symbol.fullName.show
+      if ownerName.isEmpty || ownerName == "<root>" || ownerName == "<empty>" then symbol.name.show
+      else s"$ownerName.${symbol.name.show}"
+    else if owner.exists then s"${sourceFullName(owner)}.${symbol.name.show}"
+    else symbol.name.show
   }
 
   private def isSyntheticPackageModule(symbol: Symbol)(using Context): Boolean =
